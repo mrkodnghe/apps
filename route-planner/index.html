@@ -637,13 +637,36 @@ $('#today').textContent = new Date().toLocaleDateString('en-GB',{weekday:'short'
 const MIC = '<svg viewBox="0 0 24 24" fill="none"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 19v3" stroke="#000" stroke-width="2" stroke-linecap="round"/></svg><span class="rec"></span>';
 const SEND = '<svg viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 let vi = 0;
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const STOP = '<svg viewBox="0 0 24 24" fill="none"><rect x="7" y="7" width="10" height="10" rx="2" fill="#000"/></svg>';
 function wireInput(input, btn, form, onSubmit, samples){
-  const sync = () => { const has = !!input.value.trim(); btn.innerHTML = has ? SEND : MIC; btn.setAttribute('aria-label', has ? 'Send' : 'Speak'); };
+  let rec = null, listening = false, finalText = '';
+  const sync = () => { if (listening) return; const has = !!input.value.trim(); btn.innerHTML = has ? SEND : MIC; btn.setAttribute('aria-label', has ? 'Send' : 'Speak'); };
   sync(); input.addEventListener('input', sync);
   form.addEventListener('submit', e => { e.preventDefault(); const v = input.value.trim(); if (!v) { input.focus(); return; } input.value=''; sync(); input.blur(); onSubmit(v); });
-  btn.addEventListener('click', () => { if (input.value.trim()) { form.requestSubmit(); return; }
-    btn.classList.add('listening'); toast('Listening… (voice is simulated)'); const text = samples[vi++ % samples.length]; let i = 0;
-    const iv = setInterval(() => { input.value = text.slice(0, i += 3); if (i >= text.length) { clearInterval(iv); input.value = text; btn.classList.remove('listening'); sync(); } }, 40); });
+  const simulate = (msg) => { btn.classList.add('listening'); toast(msg); const text = samples[vi++ % samples.length]; let i = 0;
+    const iv = setInterval(() => { input.value = text.slice(0, i += 3); if (i >= text.length) { clearInterval(iv); input.value = text; btn.classList.remove('listening'); sync(); } }, 40); };
+  const stopUI = () => { listening = false; btn.classList.remove('listening'); sync(); };
+  btn.addEventListener('click', () => {
+    if (listening) { rec && rec.stop(); return; }                 // tap again to finish
+    if (input.value.trim()) { form.requestSubmit(); return; }     // send typed text
+    if (!SR) { simulate('Voice isn’t supported in this browser, so here’s a sample'); return; }
+    rec = new SR(); rec.lang = 'en-GB'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+    finalText = ''; let gotSpeech = false;
+    rec.onstart = () => { listening = true; btn.classList.add('listening'); btn.innerHTML = STOP; btn.setAttribute('aria-label', 'Stop listening'); input.value = ''; input.placeholder = 'Listening…'; };
+    rec.onresult = e => { let interim = ''; finalText = '';
+      for (const r of e.results) { if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript; }
+      gotSpeech = true; input.value = (finalText + interim).trim(); };
+    rec.onerror = e => { const err = e.error;
+      if (err === 'not-allowed' || err === 'service-not-allowed') {
+        if (window.top !== window) { stopUI(); simulate('The mic only works on the hosted link, so here’s a sample'); return; }
+        toast('Microphone access is blocked. Allow it in your browser settings');
+      } else if (err === 'no-speech') toast('Didn’t catch that. Tap the mic and try again');
+      else if (err !== 'aborted') toast('Voice input stopped (' + err + ')'); };
+    rec.onend = () => { const text = (finalText || input.value).trim(); input.placeholder = input === $('#promptInput') ? 'Describe your route…' : '“Make 10km shorter”';
+      stopUI(); if (gotSpeech && text) { input.value = text; sync(); setTimeout(() => { if (input.value.trim() === text) form.requestSubmit(); }, 700); } };
+    try { rec.start(); } catch (err) { stopUI(); simulate('Voice isn’t available here, so here’s a sample'); }
+  });
 }
 wireInput($('#promptInput'), $('#micBtn'), $('#promptForm'), v => generate(v), ['80km loop from Guildford, hilly, about 1000m of climbing, café at halfway', 'Quick 30km recovery ride around Dorking, flat, quiet roads', '3 hours of gravel in the Surrey hills, around 600m elevation']);
 wireInput($('#refineInput'), $('#refineMic'), $('#refineForm'), v => refine(v), ['Make 10km shorter','Make it flatter','Add a café stop','Switch to gravel']);
@@ -668,7 +691,7 @@ $('#exportBtn').addEventListener('click', () => {
   }));
 });
 $('#aboutBtn').addEventListener('click', () => modal('About this prototype',
-  `<p>Describe a ride, or tap the mic for a sample, and you’ll get a matching loop with distance, climbing, time, surface and a café stop. Refine it with things like “Make 10km shorter”.</p><p>The map is a real MapLibre GL map in a dark theme. In this preview the roads and woods around the loop are demo geography placed at real coordinates. Hosted on its own site, the same page loads a live OpenStreetMap dark basemap automatically.</p>`,
+  `<p>Describe a ride by typing or tapping the mic and speaking, and you’ll get a matching loop with distance, climbing, time, surface and a café stop. Refine it with things like “Make 10km shorter”.</p><p>The map is a real MapLibre GL map in a dark theme. In this preview the roads and woods around the loop are demo geography placed at real coordinates. Hosted on its own site, the same page loads a live OpenStreetMap dark basemap automatically.</p>`,
   [['Got it', true]], 'Concept 4'));
 function gpx(R){ const pts = R.line.filter((_,i) => i % 2 === 0); pts.push(R.line[0]);
   return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Route planner prototype">\n  <trk><name>${R.title}</name><trkseg>\n${pts.map(([lo,la]) => `    <trkpt lat="${la.toFixed(5)}" lon="${lo.toFixed(5)}"/>`).join('\n')}\n  </trkseg></trk>\n</gpx>`.replace(/</g,'&lt;'); }
