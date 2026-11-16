@@ -653,6 +653,10 @@ function applyBrief(base, b){
   else { q.elevGiven = false; q.elev = Math.round(q.dist*6); }
   q.quiet = !!b.quiet_roads; q.cafe = !!b.cafe_stop;
   if ('existing_route' in b) { q.existing = !!b.existing_route; q.routeRef = q.existing && b.route_name ? String(b.route_name).trim().slice(0, 40) : null; }   // older relays: keep the keyword guess
+  if (q.routeRef && q.routeRef !== base.routeRef) {   // only keep a route name the rider actually wrote (its number, or its main word)
+    const said = (q.text || '').toLowerCase(), num = q.routeRef.match(/\d+/), word = q.routeRef.toLowerCase().split(/\s+/).find(w => w.length > 3 && !/^(route|national|cycle|cycleway|network)$/.test(w));
+    if (!(num ? new RegExp(`\\b${num[0]}\\b`).test(said) : word && said.includes(word))) q.routeRef = null;
+  }
   const st = b.start || {type:'gps'};
   if (st.type === 'place' && st.place) {
     if (!(base.start && !base.start.gps && base.start.name.toLowerCase() === st.place.toLowerCase())) { delete q.start; q.startPlace = st.place; q.startGPS = false; }

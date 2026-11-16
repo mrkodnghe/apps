@@ -56,7 +56,7 @@ const BRIEF_TOOL = {
       quiet_roads: { type: 'boolean', description: 'True if they want quiet lanes, low traffic, or to avoid main/busy roads.' },
       cafe_stop: { type: 'boolean', description: 'True if they want a café, coffee or cake stop. False if they say no stops, or nothing about stopping on a short ride.' },
       existing_route: { type: 'boolean', description: 'True if the rider wants to follow an existing, signed or established cycle route rather than a newly planned loop: e.g. "a National Cycle Route", "follow NCN 4", "the Avenue Verte", "a proper signposted route", "an existing route".' },
-      route_name: { type: ['string', 'null'], description: 'The specific signed route they named, if any, written as "NCN 4" for National Cycle Network numbers or its name otherwise ("Avenue Verte", "Downs Link", "EuroVelo 2"). Null if none.' },
+      route_name: { type: ['string', 'null'], description: 'The specific signed route they named, if any, written as "NCN 4" for National Cycle Network numbers or its name otherwise ("Avenue Verte", "Downs Link", "EuroVelo 2"). Null unless the rider named one: never choose a route for them.' },
       title: { type: 'string', description: 'A short route name, 2–4 words, Title case, e.g. "Surrey Hills Loop", "Flat Coffee Spin".' },
       assumptions: { type: 'array', items: { type: 'string' }, description: 'Up to 3 guesses you made that the rider might want to change, each 2–6 words, e.g. "Back by 12:00", "Road pace ~25 km/h". Skip obvious ones like looping back to start.' },
     },
