@@ -226,7 +226,7 @@ button{background:none;border:0;cursor:pointer}
 .uchip:active{transform:scale(.96);background:rgba(255,255,255,.16)}
 .uchip svg{width:10px;height:10px;opacity:.6}
 .uchip.off{color:rgba(242,242,242,.5);border-style:dashed}
-#gen .understood,#ready .understood{margin:-8px 0 32px}
+#ready .understood{margin:-8px 0 32px}
 #route .understood{margin:26px 0 0}
 .modal .actions{display:flex;gap:8px}
 .modal .actions .pill{flex:1}
@@ -264,7 +264,6 @@ button{background:none;border:0;cursor:pointer}
     <div class="dotbar" id="genBar"></div>
     <div class="axis"><span class="mono" id="genEta">Est. 6 sec</span><span class="mono" id="genStep">Step 1/5</span></div>
     <p class="quote" id="genQuote"></p>
-    <div class="understood" id="genU"></div>
     <div class="panel steps-panel"><ol class="steps" id="steps"></ol></div>
   </section>
 
@@ -721,7 +720,6 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   const p = typeof text === 'string' ? parsePrompt(text) : text, id = ++runId;
   $('#genLabel').textContent = label; $('#genQuote').textContent = `“${p.text}”`; $('#readyQuote').textContent = `“${p.text}”`;
   $$('.rideType').forEach(e => e.textContent = p.type + ' ride');
-  renderUnderstood(p, ['#genU']);
   const labels = ['Reading your description', p.quiet ? 'Finding quiet roads' : 'Finding the best roads', 'Placing the climb', p.cafe ? 'Adding a café stop' : 'Skipping café stops', 'Checking surface & elevation'];
   $('#steps').innerHTML = labels.map(l => `<li class="step pending"><span class="ic"><i></i></span><span class="lbl">${l}</span><span class="meta"></span></li>`).join('');
   const els = $$('#steps .step');
