@@ -578,13 +578,10 @@ async function realRoute(p, stage){
   const capped = p.dist > ORS_MAX_KM, targetKm = Math.min(p.dist, ORS_MAX_KM), target = targetKm*1000;
   stage(1, `Loop · ${targetKm}km · from ${start.name === 'Your' ? 'your location' : start.name}`);
   const base = p.seed % 90, seeds = [base, (base + 37) % 90];
-  // how hilly to aim for: openrouteservice's cycling fitness level steers towards or away from climbs
-  const perKm = p.elevGiven ? p.elev / targetKm : (p.hillier ? 16 : p.flatter ? 3 : 8);
-  const level = p.flatter ? 0 : perKm < 6 ? 0 : perKm < 11 ? 1 : perKm < 16 ? 2 : 3;
   const req = seed => orsFetch(`${ORS}/v2/directions/${PROFILES[p.type]}/geojson`, {method:'POST',
     headers:{'Authorization':ORS_KEY,'Content-Type':'application/json','Accept':'application/geo+json'},
     body: JSON.stringify({coordinates:[start.c], elevation:true, extra_info:['surface','waytype'], instructions:true, radiuses:[5000],
-      options:{round_trip:{length: Math.round(target*.86), points: targetKm < 35 ? 4 : 5, seed}, profile_params:{weightings:{steepness_difficulty: level}}}})});
+      options:{round_trip:{length: Math.round(target*.86), points: targetKm < 35 ? 4 : 5, seed}}})});
   const settled = await Promise.allSettled(seeds.map(req));
   const feats = settled.filter(r => r.status === 'fulfilled').map(r => r.value.features[0]);
   if (!feats.length) throw settled[0].reason;
