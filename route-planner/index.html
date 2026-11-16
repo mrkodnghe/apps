@@ -111,17 +111,21 @@ button{background:none;border:0;cursor:pointer}
 
 /* ---------- Route ---------- */
 #route{padding:0}
-.map{position:absolute;left:0;right:0;top:0;height:46%;background:#0B0B0B}
+.map{position:absolute;inset:0;background:#0B0B0B}
 .map::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;background-image:radial-gradient(rgba(242,242,242,.10) 1px,transparent 1.2px);background-size:18px 18px;mix-blend-mode:screen}
 .map-msg{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;text-align:center;padding:24px}
-.attrib{position:absolute;right:14px;bottom:44px;z-index:2;font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:rgba(242,242,242,.4);text-transform:uppercase;pointer-events:none}
+.attrib{position:absolute;right:14px;bottom:calc(var(--sv,50%) + 10px);transition:bottom .35s cubic-bezier(.2,.8,.2,1);z-index:2;font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:rgba(242,242,242,.4);text-transform:uppercase;pointer-events:none}
 .map-top{position:absolute;left:32px;right:32px;top:calc(var(--safe-t) + 24px);display:flex;align-items:center;justify-content:space-between;z-index:3;pointer-events:none}
 .map-top > *{pointer-events:auto}
 .map-top .icon-btn,.title-chip{background:rgba(0,0,0,.5)}
 .title-chip{padding:12px 16px;border-radius:999px;border:1px solid var(--line);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);color:rgba(242,242,242,.85)}
-.sheet{position:absolute;left:0;right:0;bottom:0;top:calc(46% - 32px);border-radius:40px 40px 0 0;overflow:hidden;background:#111;z-index:4}
-.sheet .inner{height:100%;padding:12px 32px calc(var(--safe-b) + 24px)}
-.handle{width:36px;height:4px;border-radius:2px;background:rgba(242,242,242,.3);margin:0 auto 20px}
+.sheet{position:absolute;left:0;right:0;top:0;height:100%;border-radius:40px 40px 0 0;overflow:hidden;background:#111;z-index:4;transform:translateY(54%);will-change:transform;transition:transform .35s cubic-bezier(.2,.8,.2,1);box-shadow:0 -12px 40px rgba(0,0,0,.45)}
+.sheet.dragging{transition:none}
+.sheet.dragging ~ * .attrib,.dragging-sheet .attrib{transition:none}
+.sheet .inner{height:46%;padding:0 32px calc(var(--safe-b) + 24px)}
+.handle-zone{padding:12px 0 20px;margin:0 -32px;cursor:grab;touch-action:none}
+.handle-zone:active{cursor:grabbing}
+.handle{width:36px;height:4px;border-radius:2px;background:rgba(242,242,242,.3);margin:0 auto}
 .row{display:flex;justify-content:space-between;align-items:baseline}
 .stats{display:grid;grid-template-columns:repeat(3,auto);justify-content:space-between;margin:20px 0 24px}
 .stat{display:flex;flex-direction:column;align-items:flex-end}
@@ -229,7 +233,7 @@ button{background:none;border:0;cursor:pointer}
     </div>
     <div class="sheet">
       <div class="inner scroll">
-        <div class="handle"></div>
+        <div class="handle-zone" id="handleZone" role="button" tabindex="0" aria-label="Expand or collapse route details"><div class="handle"></div></div>
         <div class="row"><span class="mono rideType" style="color:rgba(242,242,242,.8)">Road ride</span><span class="mono" id="genAgo">Generated just now</span></div>
         <div class="stats" id="stats"></div>
         <svg class="elev" id="elev" viewBox="0 0 329 72" role="img" aria-label="Elevation profile"></svg>
@@ -425,7 +429,7 @@ function offlineStyle(){
       {id:'road-mway', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'motorway']], paint:{'line-color':'#414141','line-width':W(6,1.6,15,16)}, layout:{'line-cap':'round','line-join':'round'}}
     ]};
 }
-let map = null, mapReady = null, live = false, markers = [];
+let map = null, mapReady = null, live = false, markers = [], lastBounds = null;
 function ensureMap(){
   if (mapReady) return mapReady;
   mapReady = new Promise(async (resolve) => {
@@ -461,7 +465,7 @@ async function renderMap(R){
   m.getSource('climb').setData(lineFC([])); m.setPaintProperty('climb-line','line-opacity',0);
   const b = R.line.reduce((bb,[x,y]) => [[Math.min(bb[0][0],x),Math.min(bb[0][1],y)],[Math.max(bb[1][0],x),Math.max(bb[1][1],y)]], [[180,90],[-180,-90]]);
   const h = $('#mapWrap').clientHeight;
-  m.fitBounds(b, {padding:{top:Math.min(100,h*.27), bottom:62, left:40, right:40}, duration:0});
+  lastBounds = b; fitRoute(0);
   if (!live) R.world.labels.forEach(l => markers.push(new maplibregl.Marker({element:el('vlabel'+(l.town?' town':''), l.n)}).setLngLat(l.ll).addTo(m)));
   // draw-on animation
   const n = R.line.length, t0 = performance.now(), dur = 1500;
@@ -548,7 +552,44 @@ function showReady(){
   $('#readyChips').innerHTML = [`${R.p.dist}km`, `${R.p.elev}m`, mm ? `${hh}h${String(mm).padStart(2,'0')}` : `${hh}hrs`, R.p.cafe ? '1 café' : 'No stops', R.p.elev > 250 ? '1 climb' : 'Flat'].map(c => `<span class="chip">${c}</span>`).join('');
   show('ready');
 }
-function openRoute(){ renderSheet(current); show('route'); requestAnimationFrame(() => renderMap(current)); }
+/* ---------- Draggable sheet over a full-screen map ---------- */
+const routeEl = $('#route'), sheetEl = $('#route .sheet'), innerEl = $('#route .sheet .inner');
+let snaps = {}, sheetState = 'mid', curY = 0;
+function computeSnaps(){ const H = routeEl.clientHeight; snaps = { full: 96, mid: Math.round(H*.46 - 32), peek: H - 168 }; }
+function setY(y, animate){ curY = y; sheetEl.classList.toggle('dragging', !animate); routeEl.classList.toggle('dragging-sheet', !animate);
+  sheetEl.style.transform = `translateY(${y}px)`; const vis = routeEl.clientHeight - y; innerEl.style.height = vis + 'px'; routeEl.style.setProperty('--sv', vis + 'px'); }
+function fitRoute(duration = 450){ if (!map || !lastBounds || sheetState === 'full') return;
+  const vis = routeEl.clientHeight - snaps[sheetState];
+  map.fitBounds(lastBounds, {padding:{top:Math.min(110, routeEl.clientHeight*.14), bottom:vis + 28, left:40, right:40}, duration}); }
+function snapTo(name, animate = true){ sheetState = name; sheetEl.dataset.state = name; setY(snaps[name], animate); fitRoute(animate ? 450 : 0); }
+function nextSnap(v){ const order = ['full','mid','peek'].map(k => [k, snaps[k]]);
+  if (v > .35) return (order.find(([,y]) => y > curY + 4) || order[2])[0];
+  if (v < -.35) return ([...order].reverse().find(([,y]) => y < curY - 4) || order[0])[0];
+  return order.reduce((a,b) => Math.abs(b[1]-curY) < Math.abs(a[1]-curY) ? b : a)[0]; }
+let drag = null;
+const dragStart = (y, onHandle) => { drag = { y0:y, startY:curY, mode:null, lastY:y, lastT:performance.now(), v:0, onHandle }; };
+const dragMove = (y, e) => { if (!drag) return; const dy = y - drag.y0;
+  if (!drag.mode) { if (Math.abs(dy) < 6) return;
+    drag.mode = (drag.onHandle || (dy > 0 && innerEl.scrollTop <= 0) || (dy < 0 && sheetState !== 'full')) ? 'sheet' : 'scroll'; }
+  if (drag.mode !== 'sheet') return; if (e && e.cancelable) e.preventDefault();
+  const now = performance.now(); drag.v = (y - drag.lastY) / Math.max(1, now - drag.lastT); drag.lastY = y; drag.lastT = now;
+  setY(Math.max(snaps.full - 24, Math.min(snaps.peek + 40, drag.startY + dy)), false); };
+const dragEnd = () => { if (!drag) return; const d = drag; drag = null; if (d.mode === 'sheet') { d.moved = true; snapTo(nextSnap(d.v)); } return d; };
+sheetEl.addEventListener('touchstart', e => dragStart(e.touches[0].clientY, !!e.target.closest('#handleZone')), {passive:true});
+sheetEl.addEventListener('touchmove', e => dragMove(e.touches[0].clientY, e), {passive:false});
+sheetEl.addEventListener('touchend', dragEnd); sheetEl.addEventListener('touchcancel', dragEnd);
+// mouse: drag the handle area
+$('#handleZone').addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') return; dragStart(e.clientY, true);
+  const mv = ev => dragMove(ev.clientY, ev), up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up);
+    const d = dragEnd(); if (d && d.mode === 'sheet') suppressClick = true; };
+  window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); });
+let suppressClick = false;
+const toggleSheet = () => snapTo(sheetState === 'peek' ? 'mid' : 'peek');
+$('#handleZone').addEventListener('click', () => { if (suppressClick) { suppressClick = false; return; } toggleSheet(); });
+$('#handleZone').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSheet(); } });
+window.addEventListener('resize', () => { if (!routeEl.classList.contains('active')) return; computeSnaps(); snapTo(sheetState, false); });
+
+function openRoute(){ renderSheet(current); show('route'); computeSnaps(); innerEl.scrollTop = 0; snapTo('mid', false); requestAnimationFrame(() => renderMap(current)); }
 function refine(text){
   const t = text.toLowerCase(), p = {...current.p}, n = t.match(/(\d+)\s*(km|k)/);
   if (/short|less|reduce/.test(t) && !/climb/.test(t)) p.dist = Math.max(5, p.dist - (n ? +n[1] : Math.round(p.dist*.1)));
