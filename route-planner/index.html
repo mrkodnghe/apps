@@ -731,23 +731,25 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   $('#steps').innerHTML = labels.map((l, i) => `<li class="step ${i ? 'pending hidden' : 'active'}"><div class="step-in"><span class="ic"><i></i></span><span class="lbl">${l}</span><span class="meta"></span></div></li>`).join('');
   const els = $$('#steps .step');
   const CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  let doneSteps = 0, shown = 0, finished = false;
+  let doneSteps = 0, shown = 0, finished = false, shownSteps = 0, stepAt = 0;   // shownSteps paces the reveal: one step at a time
   const stage = (n, meta) => { if (id !== runId) return; doneSteps = Math.max(doneSteps, n); if (meta != null) els[n-1].querySelector('.meta').textContent = meta;
     if (inPlace) $('#updatingText').textContent = n < 5 ? labels[n] : 'Drawing your route'; };
   if (inPlace) { startedAt = performance.now(); clearInterval(timer); setUpdating(true, label); }
   else { startedAt = performance.now(); show('gen'); clearInterval(timer); ensureMap(); }
   const tick = () => {
-    const el = (performance.now() - startedAt)/1000;
+    const now = performance.now(), el = (now - startedAt)/1000;
+    if (shownSteps < doneSteps && now - stepAt > (quick ? 420 : 650)) { shownSteps++; stepAt = now; }
     const timeGoal = 88*(1 - Math.exp(-el/(quick ? 1.6 : 2.6)));            // creeps towards 88% while waiting
-    const goal = finished ? 100 : Math.max(Math.min(timeGoal, 18 + doneSteps*14), doneSteps*17);
-    shown += (goal - shown) * (finished ? .35 : .12); if (finished && goal - shown < .6) shown = 100;
+    const all = finished && shownSteps >= 5 && now - stepAt > 350;
+    const goal = all ? 100 : Math.max(Math.min(timeGoal, 18 + shownSteps*14), shownSteps*17);
+    shown += (goal - shown) * (all ? .35 : .12); if (all && goal - shown < .6) shown = 100;
     const pct = Math.round(shown);
     dotNum($('#genNum'), pct + '%'); bar($('#genBar'), Math.max(1, Math.round(pct/100*30)));
-    const active = Math.min(4, doneSteps);
-    els.forEach((e,i) => { const done = i < doneSteps, cls = 'step ' + (done ? 'done' : i === active ? 'active' : 'pending hidden'), ic = done ? CHECK : '<i></i>';
+    const active = Math.min(4, shownSteps);
+    els.forEach((e,i) => { const done = i < shownSteps, cls = 'step ' + (done ? 'done' : i === active ? 'active' : 'pending hidden'), ic = done ? CHECK : '<i></i>';
       if (e.className !== cls) e.className = cls; const icEl = e.querySelector('.ic'); if (icEl.innerHTML !== ic) icEl.innerHTML = ic; });
-    $('#genStep').textContent = `Step ${Math.min(5, doneSteps + 1)}/5`;
-    $('#genEta').textContent = pct >= 100 ? 'Done' : doneSteps ? 'Routing on real roads' : 'Est. 5 sec';
+    $('#genStep').textContent = `Step ${Math.min(5, shownSteps + 1)}/5`;
+    $('#genEta').textContent = pct >= 100 ? 'Done' : shownSteps ? 'Routing on real roads' : 'Est. 5 sec';
     if (pct >= 100) { clearInterval(timer); setTimeout(() => { if (id === runId) (quick ? openRoute() : showReady()); }, 400); }
   };
   if (!inPlace) { tick(); timer = setInterval(tick, 80); }
