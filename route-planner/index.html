@@ -590,6 +590,19 @@ function renderSheet(R){
 // Prototype key, visible in the page source. Move it behind a small relay before sharing widely.
 const ORS_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjI2MWJjOTVjNjQzZDQxNTZiOGFlZmNkMzgyOGJlNTJiIiwiaCI6Im11cm11cjY0In0=';
 const ORS = 'https://api.openrouteservice.org';
+// Cloudflare Worker relay that holds the key (see /relay/worker.js). When set, the key above is not used.
+const RELAY = '';
+const orsReq = {
+  directions: (profile, body) => RELAY
+    ? [`${RELAY}/directions/${profile}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}]
+    : [`${ORS}/v2/directions/${profile}/geojson`, {method:'POST', headers:{'Authorization':ORS_KEY,'Content-Type':'application/json','Accept':'application/geo+json'}, body: JSON.stringify(body)}],
+  geocode: text => RELAY
+    ? [`${RELAY}/geocode?text=${encodeURIComponent(text)}`, {}]
+    : [`${ORS}/geocode/search?api_key=${encodeURIComponent(ORS_KEY)}&text=${encodeURIComponent(text)}&boundary.country=GB&size=1`, {}],
+  cafes: pt => RELAY
+    ? [`${RELAY}/pois`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({geometry:{geojson:{type:'Point', coordinates:pt}, buffer:2000}, limit:20})}]
+    : [`${ORS}/pois`, {method:'POST', headers:{'Authorization':ORS_KEY,'Content-Type':'application/json'}, body: JSON.stringify({request:'pois', geometry:{geojson:{type:'Point', coordinates:pt}, buffer:2000}, filters:{category_ids:[564]}, limit:20})}]
+};
 const PROFILES = {Road:'cycling-road', Gravel:'cycling-regular', MTB:'cycling-mountain'};
 const ORS_MAX_KM = 100;                      // free round-trip limit
 class RouteError extends Error { constructor(msg, kind){ super(msg); this.kind = kind; } }
@@ -601,7 +614,8 @@ async function orsFetch(url, opts = {}, ms = 25000){
   let body = null; try { body = await res.json(); } catch (e) {}
   if (!res.ok) {
     const msg = body && body.error && (body.error.message || body.error) || res.statusText;
-    if (res.status === 429 || res.status === 403) throw new RouteError('Today’s free routing allowance is used up', 'quota');
+    if (res.status === 429 && body && /slow down/i.test(String(body.error))) throw new RouteError('Too many routes too quickly, try again in a minute', 'quota');
+    if (res.status === 429 || (res.status === 403 && !RELAY)) throw new RouteError('Today’s free routing allowance is used up', 'quota');
     throw new RouteError(typeof msg === 'string' ? msg : 'Routing failed', 'route');
   }
   return body;
@@ -624,7 +638,7 @@ function getLocation(){
     err => no(err), {enableHighAccuracy:false, timeout:10000, maximumAge:600000}));
 }
 async function geocode(place){
-  try { const g = await orsFetch(`${ORS}/geocode/search?api_key=${encodeURIComponent(ORS_KEY)}&text=${encodeURIComponent(place)}&boundary.country=GB&size=1`, {}, 10000);
+  try { const g = await orsFetch(...orsReq.geocode(place), 10000);
     const f = g && g.features && g.features[0]; return f ? {c: f.geometry.coordinates, name: f.properties.name || place} : null;
   } catch (e) { if (e.kind === 'quota') throw e; return null; }
 }
@@ -654,8 +668,7 @@ async function resolveStart(p){
 async function findCafe(line, cum, total){
   // nearest café to the 40–55% mark of the ride, from OpenStreetMap via openrouteservice POIs
   const idx = cum.findIndex(d => d >= total*.45), pt = line[Math.max(0, idx)];
-  try { const r = await orsFetch(`${ORS}/pois`, {method:'POST', headers:{'Authorization':ORS_KEY,'Content-Type':'application/json'},
-      body: JSON.stringify({request:'pois', geometry:{geojson:{type:'Point', coordinates:pt}, buffer:2000}, filters:{category_ids:[564]}, limit:20})}, 10000);
+  try { const r = await orsFetch(...orsReq.cafes(pt), 10000);
     const named = (r.features || []).filter(f => f.properties.osm_tags && f.properties.osm_tags.name);
     if (named.length) { let best = null, bd = 1e12;
       named.forEach(f => { for (let i = 0; i < line.length; i += 3) { const d = hav(f.geometry.coordinates, line[i]); if (d < bd) { bd = d; best = {f, i}; } } });
@@ -670,10 +683,8 @@ async function realRoute(p, stage){
   const capped = p.dist > ORS_MAX_KM, targetKm = Math.min(p.dist, ORS_MAX_KM), target = targetKm*1000;
   stage(1, `${targetKm}km · ${start.gps ? 'from you' : start.name}`);
   const base = p.seed % 90, seeds = [base, (base + 37) % 90];
-  const req = seed => orsFetch(`${ORS}/v2/directions/${PROFILES[p.type]}/geojson`, {method:'POST',
-    headers:{'Authorization':ORS_KEY,'Content-Type':'application/json','Accept':'application/geo+json'},
-    body: JSON.stringify({coordinates:[start.c], elevation:true, extra_info:['surface','waytype'], instructions:true, radiuses:[5000],
-      options:{round_trip:{length: Math.round(target*.86), points: targetKm < 35 ? 4 : 5, seed}}})});
+  const req = seed => orsFetch(...orsReq.directions(PROFILES[p.type], {coordinates:[start.c], elevation:true, extra_info:['surface','waytype'], instructions:true, radiuses:[5000],
+      options:{round_trip:{length: Math.round(target*.86), points: targetKm < 35 ? 4 : 5, seed}}}));
   const settled = await Promise.allSettled(seeds.map(req));
   const feats = settled.filter(r => r.status === 'fulfilled').map(r => r.value.features[0]);
   if (!feats.length) throw settled[0].reason;
