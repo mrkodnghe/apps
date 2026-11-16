@@ -459,11 +459,13 @@ async function renderMap(R){
   function finish(){
     m.getSource('climb').setData(lineFC(R.climb)); m.setPaintProperty('climb-line','line-opacity',1);
     const add = (node, ll, opts={}) => markers.push(new maplibregl.Marker({element:node, ...opts}).setLngLat(ll).addTo(m));
-    if (R.p.cafe) { add(el('mk mk-cafe fade-in'), R.cafeAt); add(el('tag fade-in', `Café · km ${R.cafeKm}`), R.cafeAt, {anchor:'left', offset:[14,-16]}); }
+    const w = m.getContainer().clientWidth, onLeft = ll => m.project(ll).x < w/2;
+    if (R.p.cafe) { add(el('mk mk-cafe fade-in'), R.cafeAt); const l = onLeft(R.cafeAt);
+      add(el('tag fade-in', `Café · km ${R.cafeKm}`), R.cafeAt, {anchor: l ? 'left' : 'right', offset: l ? [14,-16] : [-14,-16]}); }
     add(el('mk mk-summit fade-in'), R.summitAt);
     add(el('tag fade-in', `<span class="dot"></span>${R.summit} m`), R.summitAt, {anchor:'top', offset:[0,12]});
-    add(el('mk mk-start fade-in'), R.start);
-    add(el('tag fade-in', 'Start · Finish'), R.start, {anchor:'top-right', offset:[-6,14]});
+    add(el('mk mk-start fade-in'), R.start); const sl = onLeft(R.start);
+    add(el('tag fade-in', 'Start · Finish'), R.start, {anchor: sl ? 'top-left' : 'top-right', offset: sl ? [6,14] : [-6,14]});
   }
 }
 
