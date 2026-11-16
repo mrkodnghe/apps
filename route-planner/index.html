@@ -649,7 +649,8 @@ function applyBrief(base, b){
   } else if (!(base.start && base.start.gps)) { delete q.start; q.startGPS = true; q.startPlace = null; }
   const startName = (st.type === 'place' && st.place || '').toLowerCase();
   q.via = (Array.isArray(b.via) ? b.via : (base.via || [])).map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== startName).slice(0, 3);   // older relays don't send via: keep the keyword guess
-  if (b.towards && !q.via.some(v => v.toLowerCase() === String(b.towards).toLowerCase())) { q.towardsPlace = b.towards; q.noTowards = false; } else { q.towardsPlace = null; q.noTowards = true; }
+  const tw = b.towards ? String(b.towards).replace(/^(?:in)?to(?:wards)?\s+|^(?:out\s+)?(?:to|towards|into)\s+/i, '').replace(/^the\s+/i, '').trim() : '';
+  if (tw && !q.via.some(v => v.toLowerCase() === tw.toLowerCase())) { q.towardsPlace = tw; q.noTowards = false; } else { q.towardsPlace = null; q.noTowards = true; }
   const taken = new Set([startName, ...q.via.map(v => v.toLowerCase())]);
   q.suggestedVia = (Array.isArray(b.suggested_via) ? b.suggested_via : []).map(v => String(v).trim()).filter(v => v && !taken.has(v.toLowerCase())).slice(0, 3);
   q.aiTitle = (b.title || '').slice(0, 40); q.assumptions = Array.isArray(b.assumptions) ? b.assumptions.map(String)
