@@ -13,6 +13,16 @@ const ORS = 'https://api.openrouteservice.org';
 const PROFILES = new Set(['cycling-road', 'cycling-regular', 'cycling-mountain', 'foot-walking', 'foot-hiking']);
 const MAX_ROUND_TRIP_M = 100000;   // openrouteservice free-tier limit for round trips
 const CAFE_CATEGORY = 564;         // openrouteservice POI category for cafés
+// Signed cycle routes (OpenStreetMap, ODbL) come from the public Overpass API. Results are cached for a week per area.
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+const UA = 'route-planner-prototype (github.com/mrkodnghe/apps)';
+function overpassQuery(lon, lat, km) {
+  const dLat = km / 111, dLon = km / (111 * Math.cos(lat * Math.PI / 180));
+  const b = [lat - dLat, lon - dLon, lat + dLat, lon + dLon].map(x => x.toFixed(4)).join(',');
+  // national and international routes, plus named regional leisure routes (not London's numbered commuter Cycleways)
+  return `[out:json][timeout:20];(rel[type=route][route=bicycle][network~"^(ncn|icn)$"][state!=proposed](${b});` +
+    `rel[type=route][route=bicycle][network=rcn][name][state!=proposed][name!~"^(Cycleway|Quietway|Cycle Superhighway|CS?[0-9]|Q[0-9])"](${b}););out geom(${b});`;
+}
 
 // ---------- AI step: turn a free-text ride request into a structured brief ----------
 const BRIEF_TOOL = {
@@ -45,10 +55,12 @@ const BRIEF_TOOL = {
       },
       quiet_roads: { type: 'boolean', description: 'True if they want quiet lanes, low traffic, or to avoid main/busy roads.' },
       cafe_stop: { type: 'boolean', description: 'True if they want a café, coffee or cake stop. False if they say no stops, or nothing about stopping on a short ride.' },
+      existing_route: { type: 'boolean', description: 'True if the rider wants to follow an existing, signed or established cycle route rather than a newly planned loop: e.g. "a National Cycle Route", "follow NCN 4", "the Avenue Verte", "a proper signposted route", "an existing route".' },
+      route_name: { type: ['string', 'null'], description: 'The specific signed route they named, if any, written as "NCN 4" for National Cycle Network numbers or its name otherwise ("Avenue Verte", "Downs Link", "EuroVelo 2"). Null if none.' },
       title: { type: 'string', description: 'A short route name, 2–4 words, Title case, e.g. "Surrey Hills Loop", "Flat Coffee Spin".' },
       assumptions: { type: 'array', items: { type: 'string' }, description: 'Up to 3 guesses you made that the rider might want to change, each 2–6 words, e.g. "Back by 12:00", "Road pace ~25 km/h". Skip obvious ones like looping back to start.' },
     },
-    required: ['activity', 'start', 'via', 'towards', 'suggested_via', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'title', 'assumptions'],
+    required: ['activity', 'start', 'via', 'towards', 'suggested_via', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'existing_route', 'route_name', 'title', 'assumptions'],
   },
 };
 const BRIEF_SYSTEM = `You turn a cyclist's free-text request into a precise brief for a UK route planner that builds loops (start and finish in the same place) on real roads.
@@ -63,6 +75,7 @@ Rules:
 - via is ONLY for places the rider actually named. Your own ideas for a good route go in suggested_via.
 - suggested_via: when the rider gives a direction or area ("into Surrey", "out to the hills"), or asks for a classic/popular/scenic ride, suggest the waypoints a local rider would use from the start location, so the outward leg is roughly 35–45% of the loop. Prefer cycle-friendly ways (parks open to bikes, quiet lanes, well-known climbs). If you don't know the area well, leave it empty.
 - If a refinement is given with a previous brief, return the full updated brief: change only what the refinement asks for, keep everything else (including via, unless asked to change it).
+- existing_route is only for riders who ask to follow an existing or signed route; don't set it just because a route would be nice.
 - Keep place names as the rider wrote them, cleaned up (capitalised, no "the" unless part of the name).`;
 
 async function understand(env, body) {
@@ -172,6 +185,31 @@ export default {
           headers: { 'Authorization': env.ORS_KEY, 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
+        return pass(res, cors);
+      }
+
+      // Signed cycle routes near a point: GET /cycleroutes?near=lon,lat&radius=km  (raw Overpass JSON; the app condenses it)
+      if (request.method === 'GET' && url.pathname === '/cycleroutes') {
+        const near = (url.searchParams.get('near') || '').split(',').map(Number);
+        if (near.length !== 2 || !near.every(Number.isFinite) || Math.abs(near[0]) > 180 || Math.abs(near[1]) > 90) return json({ error: 'Bad near' }, 400, cors);
+        const lon = Math.round(near[0] * 20) / 20, lat = Math.round(near[1] * 20) / 20;      // ~5km grid, so nearby riders share the cache
+        const radius = Math.min(Math.max(Math.ceil((Number(url.searchParams.get('radius')) || 15) / 5) * 5, 5), 30);
+        const cache = caches.default;
+        const cacheKey = new Request(`https://relay-cache.local/cycleroutes?v=1&lon=${lon}&lat=${lat}&r=${radius}`);
+        let res = await cache.match(cacheKey);
+        if (!res) {
+          const q = overpassQuery(lon, lat, radius);
+          for (const host of OVERPASS) {
+            try {
+              const up = await fetch(`${host}?data=${encodeURIComponent(q)}`, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(25000) });
+              if (!up.ok || !(up.headers.get('content-type') || '').includes('json')) continue;
+              res = new Response(up.body, { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=604800' } });
+              ctx.waitUntil(cache.put(cacheKey, res.clone()));
+              break;
+            } catch (e) { /* busy or slow: try the next server */ }
+          }
+          if (!res) return json({ error: 'Cycle route data is busy, try again shortly' }, 503, cors);
+        }
         return pass(res, cors);
       }
 
