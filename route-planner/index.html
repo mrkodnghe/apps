@@ -99,6 +99,8 @@ button{background:none;border:0;cursor:pointer}
 #gen::-webkit-scrollbar,#ready::-webkit-scrollbar{display:none}
 #gen > *,#ready > *{flex-shrink:0}
 #gen .quote,#ready .quote{margin-bottom:32px}
+/* Generating: the steps panel is pinned to the bottom edge and grows upwards */
+#gen .panel{position:absolute;left:0;right:0;bottom:0;margin:0;z-index:2}
 .status{display:flex;align-items:center;gap:10px;margin-top:40px}
 .status .mono{color:rgba(242,242,242,.8)}
 .bignum{display:block;height:clamp(84px,27vw,112px);width:auto;max-width:100%;margin:26px 0 30px}
@@ -115,11 +117,11 @@ button{background:none;border:0;cursor:pointer}
 .steps{list-style:none;display:flex;flex-direction:column;gap:22px}
 /* Generating: steps reveal one at a time, and the panel grows with them */
 #steps{gap:0}
-#steps .step{display:grid;grid-template-rows:1fr;margin-top:22px;opacity:1;
-  transition:grid-template-rows .5s cubic-bezier(.2,.8,.2,1),margin-top .5s cubic-bezier(.2,.8,.2,1),opacity .35s ease .12s}
+#steps .step{display:block;max-height:90px;overflow:hidden;margin-top:22px;opacity:1;
+  transition:max-height .5s cubic-bezier(.2,.8,.2,1),margin-top .5s cubic-bezier(.2,.8,.2,1),opacity .35s ease .15s}
 #steps .step:first-child{margin-top:0}
-#steps .step.hidden{grid-template-rows:0fr;margin-top:0;opacity:0;transition:grid-template-rows .5s cubic-bezier(.2,.8,.2,1),margin-top .5s cubic-bezier(.2,.8,.2,1),opacity .2s}
-#steps .step-in{display:flex;align-items:center;gap:16px;min-height:0;overflow:hidden}
+#steps .step.hidden{max-height:0;margin-top:0;opacity:0;transition:max-height .5s cubic-bezier(.2,.8,.2,1),margin-top .5s cubic-bezier(.2,.8,.2,1),opacity .15s}
+#steps .step-in{display:flex;align-items:center;gap:16px}
 .step{display:flex;align-items:center;gap:16px;font-size:16px;font-weight:500;transition:opacity .3s}
 .step .ic{width:16px;height:16px;display:grid;place-items:center;flex:none}
 .step .lbl{flex:1}
@@ -270,7 +272,6 @@ button{background:none;border:0;cursor:pointer}
     <svg class="bignum" id="genNum" aria-live="polite"></svg>
     <div class="dotbar" id="genBar"></div>
     <div class="axis"><span class="mono" id="genEta">Est. 6 sec</span><span class="mono" id="genStep">Step 1/5</span></div>
-    <p class="quote" id="genQuote"></p>
     <div class="panel steps-panel"><ol class="steps" id="steps"></ol></div>
   </section>
 
@@ -725,7 +726,7 @@ let current = null, timer = null, startedAt = 0, runId = 0;
 function bar(el, filled, total=30){ el.innerHTML = Array.from({length:total},(_,i)=>`<i class="${i<filled-1?'on':i===filled-1?(filled===total?'on':'lead'):''}"></i>`).join(''); }
 async function generate(text, {quick=false, label='Generating your route', inPlace=false} = {}){
   const p = typeof text === 'string' ? parsePrompt(text) : text, id = ++runId;
-  $('#genLabel').textContent = label; $('#genQuote').textContent = `“${p.text}”`; $('#readyQuote').textContent = `“${p.text}”`;
+  $('#genLabel').textContent = label; $('#readyQuote').textContent = `“${p.text}”`;
   $$('.rideType').forEach(e => e.textContent = p.type + ' ride');
   const labels = ['Reading your description', p.quiet ? 'Finding quiet roads' : 'Finding the best roads', 'Placing the climb', p.cafe ? 'Adding a café stop' : 'Skipping café stops', 'Checking surface & elevation'];
   $('#steps').innerHTML = labels.map((l, i) => `<li class="step ${i ? 'pending hidden' : 'active'}"><div class="step-in"><span class="ic"><i></i></span><span class="lbl">${l}</span><span class="meta"></span></div></li>`).join('');
