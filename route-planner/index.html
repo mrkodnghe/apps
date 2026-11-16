@@ -178,21 +178,15 @@ button{background:none;border:0;cursor:pointer}
 .fade-in{animation:fin .5s ease both}
 @keyframes fin{from{opacity:0;transform:scale(.6)}}
 
-/* in-place updating state on the Route screen */
-.map-dim{position:absolute;inset:0;z-index:1;background:rgba(0,0,0,.42);opacity:0;pointer-events:none;transition:opacity .35s}
-.updating-pill{position:absolute;left:50%;top:50%;z-index:6;display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:999px;
-  opacity:0;transform:translate(-50%,-50%) scale(.94);pointer-events:none;transition:opacity .3s,transform .3s;white-space:nowrap}
-.updating-pill .mono{color:rgba(242,242,242,.9)}
-.dl{display:flex;gap:5px}
-.dl i{width:6px;height:6px;border-radius:50%;background:#F2F2F2;opacity:.18;animation:dl 1.1s infinite ease-in-out}
-.dl i:nth-child(2){animation-delay:.12s}.dl i:nth-child(3){animation-delay:.24s}.dl i:nth-child(4){animation-delay:.36s}.dl i:nth-child(5){animation-delay:.48s}
-@keyframes dl{0%,100%{opacity:.18;transform:none}35%{opacity:1;background:var(--magenta);transform:scale(1.15)}}
-#route.updating .map-dim{opacity:1}
-#route.updating .updating-pill{opacity:1;transform:translate(-50%,-50%) scale(1)}
-.updating-pill.glass{background:linear-gradient(180deg,rgba(40,40,44,.82),rgba(20,20,22,.78));box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 16px 40px rgba(0,0,0,.55),0 2px 6px rgba(0,0,0,.3)}
-#route.updating .sheet .inner{opacity:.45;pointer-events:none;transition:opacity .3s}
+/* in-place updating state on the Route screen: blur over map and sheet, dot progress in the middle (Figma 4 v4 · Route (Chip Edit)) */
+.map-dim{display:none}
+.updating-veil{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;padding:32px;
+  background:rgba(0,0,0,.01);-webkit-backdrop-filter:blur(40px);backdrop-filter:blur(40px);opacity:0;visibility:hidden;transition:opacity .35s,visibility 0s .35s}
+.uv-in{width:100%;display:flex;flex-direction:column;gap:16px}
+.uv-label{margin:0;height:14px;line-height:14px;font-family:var(--mono);font-size:12px;color:#fff;text-align:center;text-transform:uppercase;white-space:nowrap}
+#route.updating .updating-veil{opacity:1;visibility:visible;transition:opacity .35s}
+#route.updating .map-top{z-index:6}
 #route .sheet .inner{transition:opacity .3s}
-#route.updating .maplibregl-marker{opacity:.35;transition:opacity .3s}
 
 /* minimal MapLibre CSS (stylesheets can only be inlined here) */
 .maplibregl-map{position:relative;overflow:hidden;width:100%;height:100%;-webkit-tap-highlight-color:transparent}
@@ -298,7 +292,7 @@ button{background:none;border:0;cursor:pointer}
   <!-- ================= ROUTE ================= -->
   <section class="screen" id="route" aria-label="Route details">
     <div class="map" id="mapWrap"><div id="map" style="position:absolute;inset:0"></div><div class="map-dim"></div><span class="attrib" id="attrib"></span></div>
-    <div class="updating-pill glass" role="status" aria-live="polite"><span class="dl"><i></i><i></i><i></i><i></i><i></i></span><span class="mono" id="updatingText">Updating route</span></div>
+    <div class="updating-veil" role="status" aria-live="polite"><div class="uv-in"><div class="dotbar" id="updBar"></div><p class="uv-label" id="updatingText">Updating route</p></div></div>
     <div class="map-top">
       <button class="icon-btn" id="backBtn" aria-label="Back to start"><svg viewBox="0 0 24 24" fill="none"><path d="m15 18-6-6 6-6" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <button class="mono title-chip" id="routeTitleBtn" aria-label="Rename route"><span id="routeTitle">Your loop</span><svg viewBox="0 0 24 24" fill="none"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" stroke="#F2F2F2" stroke-width="2.2" stroke-linejoin="round"/></svg></button>
@@ -1090,8 +1084,12 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   const CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   let doneSteps = 0, shown = 0, finished = false, shownSteps = 0, stepAt = 0;   // shownSteps paces the reveal: one step at a time
   const stage = (n, meta) => { if (id !== runId) return; doneSteps = Math.max(doneSteps, n); if (meta != null) els[n-1].querySelector('.meta').textContent = meta;
-    if (inPlace) $('#updatingText').textContent = n < 5 ? labels[n] : 'Drawing your route'; };
-  if (inPlace) { startedAt = performance.now(); clearInterval(timer); setUpdating(true, label); }
+  };
+  if (inPlace) { startedAt = performance.now(); clearInterval(timer); setUpdating(true);
+    // dots fill as the steps complete, creeping forward while waiting
+    let upd = 0; clearInterval(updTimer);
+    updTimer = setInterval(() => { const el = (performance.now() - startedAt)/1000, goal = Math.max(Math.min(88*(1 - Math.exp(-el/1.6)), 18 + doneSteps*14), doneSteps*17);
+      upd += (goal - upd)*.12; bar($('#updBar'), Math.max(1, Math.round(upd/100*30))); }, 80); }
   else { startedAt = performance.now(); show('gen'); clearInterval(timer); ensureMap(); }
   const tick = () => {
     const now = performance.now(), el = (now - startedAt)/1000;
@@ -1135,7 +1133,7 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   if (id !== runId) return;
   if (p.customTitle) R.title = p.customTitle; else if (p.aiTitle) R.title = p.aiTitle;
   R.req = {...p, start: R.p && R.p.start, basedOn: R.basedOn || null}; current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
-  if (inPlace) { setUpdating(false); updateRouteInPlace(R); }
+  if (inPlace) { clearInterval(updTimer); bar($('#updBar'), 30); await new Promise(r => setTimeout(r, 380)); if (id !== runId) return; setUpdating(false); updateRouteInPlace(R); }
   if (R.missed && R.missed.length) setTimeout(() => toast(`Couldn’t route through ${R.missed.join(' and ')}`), R.capped ? 2400 : 0);
   if (R.capped) toast(`Free routing caps loops at ${ORS_MAX_KM}km`);
   if (R.basedOn && !R.basedOn.asked) setTimeout(() => toast(`A new loop didn’t fit well, so this one follows ${R.basedOn.label}`), 1800);
@@ -1240,9 +1238,10 @@ function openEditor(k){
     bindOpts(v => applyEdit({cafe: v === 'yes'}));
   }
 }
-function setUpdating(on, label){
+let updTimer = null;
+function setUpdating(on){
   routeEl.classList.toggle('updating', on);
-  if (on) $('#updatingText').textContent = label || 'Updating route';
+  if (on) bar($('#updBar'), 1); else clearInterval(updTimer);
   if (map && map.getLayer && map.getLayer('route-line')) {
     map.setPaintProperty('route-line', 'line-opacity', on ? .35 : 1);
     map.setPaintProperty('route-glow', 'line-opacity', on ? 0 : .16);
