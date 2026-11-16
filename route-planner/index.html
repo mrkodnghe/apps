@@ -870,7 +870,7 @@ function signedRoutesNear(c, km){
         const j = await res.json(); if (!j || !Array.isArray(j.elements)) throw new Error('bad data'); return j; } finally { clearTimeout(to); } };
     let data;
     const direct = async () => { const u = `${OVERPASS}?data=${encodeURIComponent(overpassQuery(g[0], g[1], r))}`;
-      try { return await get(u, 50000); } catch (e) { if (![429, 502, 504].includes(e.status)) throw e; await new Promise(ok => setTimeout(ok, 4000)); return get(u, 50000); } };   // busy: one retry
+      for (let i = 0; ; i++) { try { return await get(u, 50000); } catch (e) { if (i === 2 || ![429, 502, 504].includes(e.status)) throw e; await new Promise(ok => setTimeout(ok, 6000*(i + 1))); } } };   // busy: wait for a free slot
     try { if (!RELAY) throw Object.assign(new Error('no relay'), {status: 404}); data = await get(`${RELAY}/cycleroutes?near=${g[0]},${g[1]}&radius=${r}`, 60000); }
     catch (e) { if (e.status !== 404) throw e; data = await direct(); }   // relay without /cycleroutes yet
     return condenseRoutes(data);
