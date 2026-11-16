@@ -603,9 +603,9 @@ const orsReq = {
   directions: (profile, body) => RELAY
     ? [`${RELAY}/directions/${profile}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}]
     : [`${ORS}/v2/directions/${profile}/geojson`, {method:'POST', headers:{'Authorization':ORS_KEY,'Content-Type':'application/json','Accept':'application/geo+json'}, body: JSON.stringify(body)}],
-  geocode: text => RELAY
-    ? [`${RELAY}/geocode?text=${encodeURIComponent(text)}`, {}]
-    : [`${ORS}/geocode/search?api_key=${encodeURIComponent(ORS_KEY)}&text=${encodeURIComponent(text)}&boundary.country=GB&size=1`, {}],
+  geocode: (text, near, radius) => RELAY
+    ? [`${RELAY}/geocode?text=${encodeURIComponent(text)}${near ? `&near=${near[0].toFixed(3)},${near[1].toFixed(3)}&radius=${Math.round(radius || 40)}` : ''}`, {}]
+    : [`${ORS}/geocode/search?api_key=${encodeURIComponent(ORS_KEY)}&text=${encodeURIComponent(text)}&boundary.country=GB&size=1${near ? `&focus.point.lon=${near[0]}&focus.point.lat=${near[1]}&boundary.circle.lon=${near[0]}&boundary.circle.lat=${near[1]}&boundary.circle.radius=${Math.round(radius || 40)}` : ''}`, {}],
   cafes: pt => RELAY
     ? [`${RELAY}/pois`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({geometry:{geojson:{type:'Point', coordinates:pt}, buffer:2000}, limit:20})}]
     : [`${ORS}/pois`, {method:'POST', headers:{'Authorization':ORS_KEY,'Content-Type':'application/json'}, body: JSON.stringify({request:'pois', geometry:{geojson:{type:'Point', coordinates:pt}, buffer:2000}, filters:{category_ids:[564]}, limit:20})}]
@@ -688,8 +688,8 @@ function getLocation(){
     pos => { gpsCache = {t: Date.now(), c: [pos.coords.longitude, pos.coords.latitude]}; ok(gpsCache.c); },
     err => no(err), {enableHighAccuracy:false, timeout:10000, maximumAge:600000}));
 }
-async function geocode(place){
-  try { const g = await orsFetch(...orsReq.geocode(place), 10000);
+async function geocode(place, near, radius){
+  try { const g = await orsFetch(...orsReq.geocode(place, near, radius), 10000);
     const f = g && g.features && g.features[0]; return f ? {c: f.geometry.coordinates, name: f.properties.name || place} : null;
   } catch (e) { if (e.kind === 'quota') throw e; return null; }
 }
@@ -731,10 +731,24 @@ async function findCafe(line, cum, total){
   return {at: pt, name: 'Café stop', km: Math.round(cum[Math.max(0, idx)]/1000)};
 }
 const SURF = {asphalt:[3], paved:[1,4,5,6,7,14,18], gravel:[2,8,9,10,11,12,13,15,16,17]};
-async function resolvePlace(name){
-  const k = Object.keys(AREAS).find(k => k === name.toLowerCase());
+// Exact spots for popular must-pass places (park/hill centres, roughly where riders go)
+const SPOTS = {
+  'richmond park':[-0.2750,51.4425], 'bushy park':[-0.3330,51.4140], 'kew':[-0.2930,51.4780], 'kew gardens':[-0.2930,51.4780],
+  'hampton court':[-0.3370,51.4030], 'kingston':[-0.3006,51.4123], 'kingston upon thames':[-0.3006,51.4123],
+  'box hill':[-0.3100,51.2520], 'zig zag road':[-0.3165,51.2540], 'leith hill':[-0.3720,51.1760], 'ranmore':[-0.3700,51.2440], 'ranmore common':[-0.3700,51.2440],
+  'newlands corner':[-0.5050,51.2320], 'shere':[-0.4538,51.2203], 'peaslake':[-0.4440,51.1890], 'holmbury hill':[-0.4180,51.1770], 'staple lane':[-0.4290,51.2490],
+  'windsor great park':[-0.6040,51.4410], 'regent\'s park':[-0.1530,51.5310], 'regents park':[-0.1530,51.5310], 'hyde park':[-0.1650,51.5070],
+  'wimbledon common':[-0.2350,51.4330], 'ditchling beacon':[-0.1060,50.9010], 'whiteleaf':[-0.8170,51.7270], 'chinnor hill':[-0.9050,51.6950]
+};
+async function resolvePlace(name, near, radiusKm){
+  const n = name.toLowerCase().replace(/^the\s+/, '');
+  if (SPOTS[n]) return {name, c: SPOTS[n]};
+  const k = Object.keys(AREAS).find(k => k === n);
   if (k) return {name: AREAS[k].name, c: AREAS[k].c};
-  const g = await geocode(name); return g ? {name, c: g.c} : null;
+  const g = await geocode(name, near, radiusKm);
+  // reject matches far from the start (e.g. a different Richmond Park at the other end of the country)
+  if (!g || (near && hav(near, g.c) > radiusKm*1000*1.1)) return null;
+  return {name, c: g.c};
 }
 const toRad = d => d*Math.PI/180, toDeg = r => r*180/Math.PI;
 function bearing(a, b){ const y = Math.sin(toRad(b[0]-a[0]))*Math.cos(toRad(b[1])), x = Math.cos(toRad(a[1]))*Math.sin(toRad(b[1])) - Math.sin(toRad(a[1]))*Math.cos(toRad(b[1]))*Math.cos(toRad(b[0]-a[0])); return (toDeg(Math.atan2(y, x)) + 360) % 360; }
@@ -774,7 +788,8 @@ async function viaFeatures(p, start, vias, target){
 async function realRoute(p, stage){
   const start = await resolveStart(p);
   const viaNames = (p.via || []).filter(Boolean).slice(0, 3);
-  const resolved = await Promise.all(viaNames.map(n => resolvePlace(n).catch(() => null)));
+  const viaRadius = Math.max(15, Math.min(p.dist, 150)*.6);
+  const resolved = await Promise.all(viaNames.map(n => resolvePlace(n, start.c, viaRadius).catch(() => null)));
   const vias = resolved.filter(Boolean), unfound = viaNames.filter((n, i) => !resolved[i]);
   const maxKm = vias.length ? 150 : ORS_MAX_KM;
   const capped = p.dist > maxKm, targetKm = Math.min(p.dist, maxKm), target = targetKm*1000;

@@ -129,15 +129,20 @@ export default {
         return pass(res, cors);
       }
 
-      // Place search: GET /geocode?text=Guildford  (cached for a day to save quota)
+      // Place search: GET /geocode?text=Richmond Park&near=lon,lat&radius=km  (cached for a day to save quota)
+      // near/radius keep the search close to the start, so "Richmond Park" means the one in London, not Yorkshire.
       if (request.method === 'GET' && url.pathname === '/geocode') {
         const text = (url.searchParams.get('text') || '').trim().slice(0, 100);
         if (!text) return json({ error: 'Missing text' }, 400, cors);
+        const near = (url.searchParams.get('near') || '').split(',').map(Number);
+        const hasNear = near.length === 2 && near.every(Number.isFinite);
+        const radius = Math.min(Math.max(Number(url.searchParams.get('radius')) || 40, 5), 150);
+        const area = hasNear ? `&focus.point.lon=${near[0].toFixed(3)}&focus.point.lat=${near[1].toFixed(3)}&boundary.circle.lon=${near[0].toFixed(3)}&boundary.circle.lat=${near[1].toFixed(3)}&boundary.circle.radius=${radius}` : '';
         const cache = caches.default;
-        const cacheKey = new Request(`https://relay-cache.local/geocode?text=${encodeURIComponent(text.toLowerCase())}`);
+        const cacheKey = new Request(`https://relay-cache.local/geocode?text=${encodeURIComponent(text.toLowerCase())}${area}`);
         let res = await cache.match(cacheKey);
         if (!res) {
-          const up = await fetch(`${ORS}/geocode/search?api_key=${encodeURIComponent(env.ORS_KEY)}&text=${encodeURIComponent(text)}&boundary.country=GB&size=1`);
+          const up = await fetch(`${ORS}/geocode/search?api_key=${encodeURIComponent(env.ORS_KEY)}&text=${encodeURIComponent(text)}&boundary.country=GB&size=1${area}`);
           res = new Response(up.body, up);
           res.headers.set('Cache-Control', 'public, max-age=86400');
           if (up.ok) ctx.waitUntil(cache.put(cacheKey, res.clone()));
