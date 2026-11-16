@@ -122,7 +122,7 @@ button{background:none;border:0;cursor:pointer}
 .sheet{position:absolute;left:0;right:0;top:0;height:100%;border-radius:40px 40px 0 0;overflow:hidden;background:#111;z-index:4;transform:translateY(54%);will-change:transform;transition:transform .35s cubic-bezier(.2,.8,.2,1);box-shadow:0 -12px 40px rgba(0,0,0,.45)}
 .sheet.dragging{transition:none}
 .sheet.dragging ~ * .attrib,.dragging-sheet .attrib{transition:none}
-.sheet .inner{height:46%;padding:0 32px calc(var(--safe-b) + 24px)}
+.sheet .inner{height:46%;padding:0 32px calc(var(--safe-b) + 32px)}
 .handle-zone{padding:12px 0 20px;margin:0 -32px;cursor:grab;touch-action:none}
 .handle-zone:active{cursor:grabbing}
 .handle{width:36px;height:4px;border-radius:2px;background:rgba(242,242,242,.3);margin:0 auto}
@@ -136,6 +136,7 @@ button{background:none;border:0;cursor:pointer}
 .legend i{width:8px;height:8px;border-radius:50%;background:var(--fg)}
 #route .dotbar{margin-top:24px}
 #refineForm{margin:28px 0 16px}
+#exportBtn{margin:0}
 .mk{position:relative}
 .mk-start{width:22px;height:22px;border-radius:50%;background:var(--teal);border:3px solid #fff;box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .mk-summit{width:12px;height:12px;border-radius:50%;background:#fff;border:3px solid #111}
@@ -555,7 +556,19 @@ function showReady(){
 /* ---------- Draggable sheet over a full-screen map ---------- */
 const routeEl = $('#route'), sheetEl = $('#route .sheet'), innerEl = $('#route .sheet .inner');
 let snaps = {}, sheetState = 'mid', curY = 0;
-function computeSnaps(){ const H = routeEl.clientHeight; snaps = { full: 96, mid: Math.round(H*.46 - 32), peek: H - 168 }; }
+const safeProbe = Object.assign(document.createElement('div'), {style:'position:absolute;visibility:hidden;padding-bottom:env(safe-area-inset-bottom,0px)'});
+document.body.appendChild(safeProbe);
+function computeSnaps(){
+  const H = routeEl.clientHeight, safeB = parseFloat(getComputedStyle(safeProbe).paddingBottom) || 0;
+  // full: sheet is exactly as tall as its content, so the bottom padding matches the 32px sides
+  const prev = innerEl.style.height; innerEl.style.height = 'auto'; const natural = innerEl.offsetHeight; innerEl.style.height = prev;
+  // peek: show the header and stats only, cut off before the elevation chart starts
+  const st = $('#stats'), statsBottom = st.offsetTop + st.offsetHeight;
+  const peek = Math.round(H - (statsBottom + 12 + safeB));
+  let full = Math.max(96, Math.round(H - natural)), mid = Math.round(H*.46 - 32);
+  mid = Math.min(Math.max(mid, full + 40), peek - 80);
+  snaps = { full: Math.min(full, mid), mid, peek };
+}
 function setY(y, animate){ curY = y; sheetEl.classList.toggle('dragging', !animate); routeEl.classList.toggle('dragging-sheet', !animate);
   sheetEl.style.transform = `translateY(${y}px)`; const vis = routeEl.clientHeight - y; innerEl.style.height = vis + 'px'; routeEl.style.setProperty('--sv', vis + 'px'); }
 function fitRoute(duration = 450){ if (!map || !lastBounds || sheetState === 'full') return;
