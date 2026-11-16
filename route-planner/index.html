@@ -1146,8 +1146,9 @@ function chipsFor(p){
 }
 let editingReq = null;
 function renderUnderstood(p, targets){
+  const asm = (p.assumptions || []).filter(a => !(p.basedOn && /^Popular way/.test(a)));   // the AI's usual way doesn't apply when a signed route is used
   const html = `<span class="mono">What I understood · tap to change</span><div class="uchips">${chipsFor(p).map(([k, label, off]) =>
-    `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.basedOn ? `<p class="assume signed-note"><span class="sdash"></span>Follows ${esc(p.basedOn.label)} for ${p.basedOn.km} km${p.basedOn.mixed && p.basedOn.unpaved > .1 ? ` · ${Math.round(p.basedOn.unpaved*100)}% unpaved paths` : ''} · signed cycle route from OpenStreetMap</p>` : ''}${p.assumptions && p.assumptions.length ? `<p class="assume">Assumed: ${p.assumptions.map(a => esc(a)).join(' · ')}</p>` : ''}`;
+    `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.basedOn ? `<p class="assume signed-note"><span class="sdash"></span>Follows ${esc(p.basedOn.label)} for ${p.basedOn.km} km${p.basedOn.mixed && p.basedOn.unpaved > .1 ? ` · ${Math.round(p.basedOn.unpaved*100)}% unpaved paths` : ''} · signed cycle route from OpenStreetMap</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
   targets.forEach(sel => { const el = $(sel); el.innerHTML = html; el._req = p; });
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (!b) return;
