@@ -826,7 +826,7 @@ function joinFragments(segs, near){
   }
 }
 // Overpass relations → a few clean polylines per route, ways chained end to end and thinned to ~120m spacing
-function condenseRoutes(data){
+function condenseRoutes(data, limit = 40){
   const out = [];
   for (const rel of (data && data.elements) || []) {
     if (rel.type !== 'relation' || !rel.members) continue;
@@ -858,13 +858,29 @@ function condenseRoutes(data){
       if (len >= 1500) { lines.push(thin); km += len/1000; } }
     if (lines.length) out.push({id: rel.id, name: t.name || '', ref: t.ref || '', network: t.network || '', km: Math.round(km*10)/10, lines});
   }
-  return out.sort((a, b) => b.km - a.km).slice(0, 40);
+  return out.sort((a, b) => b.km - a.km).slice(0, limit);
 }
 const signedMemo = new Map();
+// Ready-made signed routes for London & the South East (rebuilt from OpenStreetMap now and then): instant, no Overpass wait
+const SIGNED_REGION = {bbox: [-1.0, 50.75, 0.4, 51.75], url: 'signed-routes-se.json'};
+let regionP = null;
+function routesFromRegion(c, km){
+  regionP = regionP || fetch(SIGNED_REGION.url).then(r => r.ok ? r.json() : null).catch(() => null);
+  return regionP.then(d => {
+    if (!d || !Array.isArray(d.routes)) return null;
+    if (Array.isArray(d.tiles) && !d.tiles.some(([so, w, n, e]) => c[0] > w && c[0] < e && c[1] > so && c[1] < n)) return null;   // not covered yet: ask Overpass
+    const reach = km*1000;
+    return d.routes.map(r => ({...r, lines: r.lines.filter(L => L.some((pt, i) => i % 4 === 0 && hav(pt, c) < reach))}))
+      .filter(r => r.lines.length).sort((a, b) => b.km - a.km).slice(0, 40);
+  });
+}
 function signedRoutesNear(c, km){
   // snap to a ~5km grid so nearby riders share the relay's cached copy
   const g = [Math.round(c[0]*20)/20, Math.round(c[1]*20)/20], r = Math.min(30, Math.ceil(km/5)*5), key = `${g}/${r}`;
-  if (!signedMemo.has(key)) signedMemo.set(key, (async () => {
+  const [w, so, e, n] = SIGNED_REGION.bbox;
+  if (!signedMemo.has(key) && c[0] > w && c[0] < e && c[1] > so && c[1] < n) signedMemo.set(key, routesFromRegion(c, r).then(x => x || liveRoutes()));
+  const liveRoutes = () => (async () => {
+    try { const hit = JSON.parse(localStorage.getItem('sr:' + key) || 'null'); if (hit && Date.now() - hit.t < 7*864e5) return hit.routes; } catch (e) {}
     const get = async (url, ms) => { const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), ms);
       try { const res = await fetch(url, {signal: ctl.signal}); if (!res.ok) { const e = new Error('overpass'); e.status = res.status; throw e; }
         const j = await res.json(); if (!j || !Array.isArray(j.elements)) throw new Error('bad data'); return j; } finally { clearTimeout(to); } };
@@ -877,8 +893,11 @@ function signedRoutesNear(c, km){
     relay.then(() => { settled = true; }, () => {});
     const own = new Promise(ok => setTimeout(ok, RELAY ? 3000 : 0)).then(() => settled ? Promise.reject(new Error('relay answered')) : direct());
     data = await Promise.any([relay, own]);
-    return condenseRoutes(data);
-  })().catch(() => { signedMemo.delete(key); return null; }));
+    const routes = condenseRoutes(data);
+    try { localStorage.setItem('sr:' + key, JSON.stringify({t: Date.now(), routes})); } catch (e) {}   // this device keeps it for a week
+    return routes;
+  })().catch(() => { signedMemo.delete(key); return null; });
+  if (!signedMemo.has(key)) signedMemo.set(key, liveRoutes());
   return signedMemo.get(key);
 }
 function signedLabel(r){
