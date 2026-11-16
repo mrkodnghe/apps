@@ -613,20 +613,20 @@ const orsReq = {
 const PROFILES = {Road:'cycling-road', Gravel:'cycling-regular', MTB:'cycling-mountain'};
 const ORS_MAX_KM = 100;                      // free round-trip limit
 /* ---------- AI step: the relay asks Claude to turn the prompt into a structured brief ---------- */
-async function aiUnderstand(text, previous){
+async function aiUnderstand(text, previous, near){
   if (!RELAY) return null;
   const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 9000);
   try {
     const now = new Date().toLocaleString('en-GB', {weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
     const res = await fetch(`${RELAY}/understand`, {method:'POST', headers:{'Content-Type':'application/json'}, signal: ctl.signal,
-      body: JSON.stringify({text, context:{now}, ...(previous ? {previous} : {})})});
+      body: JSON.stringify({text, context:{now, ...(near ? {start:{lat: +near[1].toFixed(2), lon: +near[0].toFixed(2)}} : {})}, ...(previous ? {previous} : {})})});
     if (!res.ok) return null;
     const j = await res.json(); return j && j.brief && typeof j.brief === 'object' ? j.brief : null;
   } catch (e) { return null; } finally { clearTimeout(to); }
 }
 function briefFromP(p){
   return { activity: (p.type || 'Road').toLowerCase(), start: p.start && !p.start.gps ? {type:'place', place:p.start.name} : p.startPlace ? {type:'place', place:p.startPlace} : {type:'gps'},
-    via: p.via || [], towards: p.towardsPlace || null, distance_km: p.dist, duration_min: null,
+    via: p.via || [], suggested_via: p.suggestedVia || [], towards: p.towardsPlace || null, distance_km: p.dist, duration_min: null,
     climbing: {target_m: p.elevGiven ? p.elev : null, preference: p.flatter ? 'flat' : p.hillier ? 'hilly' : p.elevGiven ? 'rolling' : 'any'},
     quiet_roads: !!p.quiet, cafe_stop: !!p.cafe, title: p.customTitle || p.aiTitle || '', assumptions: p.assumptions || [] };
 }
@@ -650,10 +650,13 @@ function applyBrief(base, b){
   const startName = (st.type === 'place' && st.place || '').toLowerCase();
   q.via = (Array.isArray(b.via) ? b.via : (base.via || [])).map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== startName).slice(0, 3);   // older relays don't send via: keep the keyword guess
   if (b.towards && !q.via.some(v => v.toLowerCase() === String(b.towards).toLowerCase())) { q.towardsPlace = b.towards; q.noTowards = false; } else { q.towardsPlace = null; q.noTowards = true; }
+  const taken = new Set([startName, ...q.via.map(v => v.toLowerCase())]);
+  q.suggestedVia = (Array.isArray(b.suggested_via) ? b.suggested_via : []).map(v => String(v).trim()).filter(v => v && !taken.has(v.toLowerCase())).slice(0, 3);
   q.aiTitle = (b.title || '').slice(0, 40); q.assumptions = Array.isArray(b.assumptions) ? b.assumptions.map(String)
     .filter(x => !/loop(s)? (back )?to (the )?start|start and finish|returns? to the start/i.test(x))
     .map(x => { x = x.replace(/\s*\(.*?\)/g, '').replace(/[.;]$/, '').trim(); if (x.length <= 44) return x; const cut = x.slice(0, 44); return cut.slice(0, cut.lastIndexOf(' ')) + '…'; })
     .slice(0, 3) : [];
+  if (q.suggestedVia.length) q.assumptions = [`Popular way via ${q.suggestedVia.slice(0, 2).join(' & ')}${q.suggestedVia.length > 2 ? '…' : ''}`, ...q.assumptions].slice(0, 3);
   return q;
 }
 class RouteError extends Error { constructor(msg, kind){ super(msg); this.kind = kind; } }
@@ -757,7 +760,7 @@ function destPoint(c, brg, km){ const d = km/6371, b = toRad(brg), la = toRad(c[
   return [toDeg(lo2), toDeg(la2)]; }
 const crowLen = pts => pts.reduce((t, c, i) => i ? t + hav(pts[i-1], c) : 0, 0);
 // Route start → each must-pass place → back, adding a hidden "shaping" point so the loop comes back a different way and hits the distance.
-async function viaFeatures(p, start, vias, target){
+async function viaFeatures(p, start, vias, target, snap = 1500){
   const ROAD = 1.3, chain = [start.c, ...vias.map(v => v.c)];
   const cen = [vias.reduce((t, v) => t + v.c[0], 0)/vias.length, vias.reduce((t, v) => t + v.c[1], 0)/vias.length];
   const brg = bearing(start.c, cen), last = chain[chain.length - 1];
@@ -771,7 +774,7 @@ async function viaFeatures(p, start, vias, target){
   }
   if (!plans.length || vias.length > 1) plans.push({S: null, e: direct});
   const body = pl => ({coordinates: pl.S ? [...chain, pl.S, start.c] : [...chain, start.c], elevation:true, extra_info:['surface','waytype'], instructions:true,
-    radiuses: [5000, ...vias.map(() => 1500), ...(pl.S ? [4000] : []), 5000]});
+    radiuses: [5000, ...vias.map(() => snap), ...(pl.S ? [4000] : []), 5000]});
   const run = async list => (await Promise.allSettled(list.slice(0, 2).map(pl => orsFetch(...orsReq.directions(PROFILES[p.type], body(pl))).then(r => ({pl, f: r.features[0]})))));
   let settled = await run(plans), ok = settled.filter(r => r.status === 'fulfilled').map(r => r.value);
   if (!ok.length) throw settled[0].reason;
@@ -794,9 +797,23 @@ async function realRoute(p, stage){
   const maxKm = vias.length ? 150 : ORS_MAX_KM;
   const capped = p.dist > maxKm, targetKm = Math.min(p.dist, maxKm), target = targetKm*1000;
   stage(1, `${targetKm}km · ${vias.length ? 'via ' + vias[0].name : start.gps ? 'from you' : start.name}`);
+  // background waypoints: the AI's "usual way" suggestions, or a point heading into the named area
+  let soft = [];
+  if (!vias.length) {
+    const reach = Math.max(8, targetKm*.42);
+    if ((p.suggestedVia || []).length) {
+      const sv = await Promise.all(p.suggestedVia.map(n => resolvePlace(n, start.c, reach).catch(() => null)));
+      soft = sv.filter(v => v && hav(start.c, v.c) <= reach*1000);
+    }
+    if (!soft.length && p.towards) {
+      const maxCrow = targetKm*.33, d = hav(start.c, p.towards)/1000;
+      soft = [{name: p.towardsPlace || 'towards', c: d > maxCrow ? destPoint(start.c, bearing(start.c, p.towards), maxCrow) : p.towards, anchor: true}];
+    }
+  }
   let feats;
   if (vias.length) feats = await viaFeatures(p, start, vias, target);
-  else {
+  else if (soft.length) { try { feats = await viaFeatures(p, start, soft, target, 3500); } catch (e) { if (e.kind === 'quota') throw e; feats = null; } }
+  if (!feats) {
     const base = p.seed % 90, seeds = [base, (base + 37) % 90];
     const req = seed => orsFetch(...orsReq.directions(PROFILES[p.type], {coordinates:[start.c], elevation:true, extra_info:['surface','waytype'], instructions:true, radiuses:[5000],
         options:{round_trip:{length: Math.round(target*.86), points: targetKm < 35 ? 4 : 5, seed}}}));
@@ -887,7 +904,11 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   if (!inPlace) { tick(); timer = setInterval(tick, 80); }
   let R;
   if (RELAY && (typeof text === 'string' || p._refine)) {
-    const b = p._refine ? await aiUnderstand(p._refine.text, briefFromP(p._refine.base)) : await aiUnderstand(p.text);
+    let near = null;
+    if (p._refine) near = p._refine.base.start ? p._refine.base.start.c : null;
+    else if (!placeFromText(p.text, START_WORDS)) near = await Promise.race([getLocation().catch(() => null), new Promise(r => setTimeout(() => r(null), 6000))]);
+    if (id !== runId) return;
+    const b = p._refine ? await aiUnderstand(p._refine.text, briefFromP(p._refine.base), near) : await aiUnderstand(p.text, null, near);
     if (id !== runId) return;
     if (b) { p = applyBrief(p._refine ? {...p._refine.base, text: p.text, seed: p.seed} : p, b);
       $$('.rideType').forEach(e => e.textContent = p.type + ' ride');
@@ -991,7 +1012,7 @@ function openEditor(k){
   } else if (k === 'towards') {
     modal('Heading towards', `<p>The loop leans towards ${detectTowardsLabel(p)}. Loops can’t be aimed exactly, so this picks the option that gets closest.</p>` +
       optRows([['keep',`Keep ${detectTowardsLabel(p)}`,''],['none','No destination','Any direction']], 'keep'), [['Cancel', false]], 'Edit');
-    bindOpts(v => v === 'none' ? applyEdit({noTowards:true, towardsPlace:null}) : close());
+    bindOpts(v => v === 'none' ? applyEdit({noTowards:true, towardsPlace:null, suggestedVia:[], assumptions:(p.assumptions || []).filter(a => !/^Popular way/.test(a))}) : close());
   } else if (k === 'type') {
     modal('Ride type', optRows([['Road','Road ride','Tarmac'],['Gravel','Gravel ride','Lanes & tracks'],['MTB','MTB ride','Trails']], p.type), [['Cancel', false]], 'Edit');
     bindOpts(v => applyEdit({type:v}));

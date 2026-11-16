@@ -32,6 +32,7 @@ const BRIEF_TOOL = {
       },
       via: { type: 'array', items: { type: 'string' }, description: 'Specific places the route MUST pass through, in riding order (max 3): parks, villages, hills, landmarks, cafés by name. E.g. "through Richmond Park then Kew" → ["Richmond Park", "Kew"]. Empty if none.' },
       towards: { type: ['string', 'null'], description: 'Only a loose direction or wider area to head into ("into Surrey", "out towards the coast"), not a must-pass place. Null if none or if it is already in via.' },
+      suggested_via: { type: 'array', items: { type: 'string' }, description: 'Your local knowledge: up to 3 well-known cycling waypoints (parks, villages, climbs, cycle paths) that riders from this start usually use for this kind of ride, in riding order, fitting the distance. E.g. from Richmond "into Surrey" → ["Richmond Park", "Kingston upon Thames", "Esher"]. Only real places you are confident are near the start; empty if unsure. Never repeat via places.' },
       distance_km: { type: 'number', description: 'Target loop distance in km. If only a time budget is given, convert it using the pace and stop rules. Clamp to 5–100.' },
       duration_min: { type: ['number', 'null'], description: 'Total time budget in minutes if the rider gave one (including "back by 12" relative to now), else null.' },
       climbing: {
@@ -47,7 +48,7 @@ const BRIEF_TOOL = {
       title: { type: 'string', description: 'A short route name, 2–4 words, Title case, e.g. "Surrey Hills Loop", "Flat Coffee Spin".' },
       assumptions: { type: 'array', items: { type: 'string' }, description: 'Up to 3 guesses you made that the rider might want to change, each 2–6 words, e.g. "Back by 12:00", "Road pace ~25 km/h". Skip obvious ones like looping back to start.' },
     },
-    required: ['activity', 'start', 'via', 'towards', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'title', 'assumptions'],
+    required: ['activity', 'start', 'via', 'towards', 'suggested_via', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'title', 'assumptions'],
   },
 };
 const BRIEF_SYSTEM = `You turn a cyclist's free-text request into a precise brief for a UK route planner that builds loops (start and finish in the same place) on real roads.
@@ -59,6 +60,8 @@ Rules:
 - climbing: "flat"/"easy"/"recovery" → flat; "lumpy"/"hilly"/"climbing" → hilly; a stated figure goes in target_m (use the middle of a range).
 - Places the rider wants to go through, via, past, over, round, or to visit go in via (in order). Use towards only for a vague direction or big region. A named start place is never also a via place.
 - A climb or hill named as something to ride ("up Box Hill", "do Leith Hill") goes in via.
+- via is ONLY for places the rider actually named. Your own ideas for a good route go in suggested_via.
+- suggested_via: when the rider gives a direction or area ("into Surrey", "out to the hills"), or asks for a classic/popular/scenic ride, suggest the waypoints a local rider would use from the start location, so the outward leg is roughly 35–45% of the loop. Prefer cycle-friendly ways (parks open to bikes, quiet lanes, well-known climbs). If you don't know the area well, leave it empty.
 - If a refinement is given with a previous brief, return the full updated brief: change only what the refinement asks for, keep everything else (including via, unless asked to change it).
 - Keep place names as the rider wrote them, cleaned up (capitalised, no "the" unless part of the name).`;
 
@@ -67,6 +70,8 @@ async function understand(env, body) {
   if (!text) return { status: 400, data: { error: 'Missing text' } };
   const ctx = body.context || {};
   const lines = [`Current local time: ${String(ctx.now || '').slice(0, 40) || 'unknown'}.`];
+  const sl = ctx.start || {};
+  if (Number.isFinite(Number(sl.lat)) && Number.isFinite(Number(sl.lon))) lines.push(`Rider's current location (GPS, approx.): ${Number(sl.lat).toFixed(2)}, ${Number(sl.lon).toFixed(2)}.`);
   if (body.previous) lines.push(`Previous brief: ${JSON.stringify(body.previous).slice(0, 2000)}`, `Refinement: ${text}`);
   else lines.push(`Request: ${text}`);
   const res = await fetch('https://api.anthropic.com/v1/messages', {
