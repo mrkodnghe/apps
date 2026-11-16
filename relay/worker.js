@@ -201,7 +201,7 @@ export default {
           const q = overpassQuery(lon, lat, radius);
           for (const host of OVERPASS) {
             try {
-              const up = await fetch(`${host}?data=${encodeURIComponent(q)}`, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(25000) });
+              const up = await fetch(`${host}?data=${encodeURIComponent(q)}`, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(50000) });   // Overpass can be slow when busy
               if (!up.ok || !(up.headers.get('content-type') || '').includes('json')) continue;
               res = new Response(up.body, { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=604800' } });
               ctx.waitUntil(cache.put(cacheKey, res.clone()));

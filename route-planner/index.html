@@ -699,7 +699,7 @@ function getLocation(){
   if (gpsCache && Date.now() - gpsCache.t < 600000) return Promise.resolve(gpsCache.c);
   if (!navigator.geolocation) return Promise.reject(new Error('unsupported'));
   return new Promise((ok, no) => navigator.geolocation.getCurrentPosition(
-    pos => { gpsCache = {t: Date.now(), c: [pos.coords.longitude, pos.coords.latitude]}; ok(gpsCache.c); },
+    pos => { gpsCache = {t: Date.now(), c: [pos.coords.longitude, pos.coords.latitude]}; signedRoutesNear(gpsCache.c, 20); ok(gpsCache.c); },   // warm up nearby signed routes early
     err => no(err), {enableHighAccuracy:false, timeout:10000, maximumAge:600000}));
 }
 async function geocode(place, near, radius){
@@ -869,8 +869,10 @@ function signedRoutesNear(c, km){
       try { const res = await fetch(url, {signal: ctl.signal}); if (!res.ok) { const e = new Error('overpass'); e.status = res.status; throw e; }
         const j = await res.json(); if (!j || !Array.isArray(j.elements)) throw new Error('bad data'); return j; } finally { clearTimeout(to); } };
     let data;
-    try { if (!RELAY) throw Object.assign(new Error('no relay'), {status: 404}); data = await get(`${RELAY}/cycleroutes?near=${g[0]},${g[1]}&radius=${r}`, 30000); }
-    catch (e) { if (e.status !== 404) throw e; data = await get(`${OVERPASS}?data=${encodeURIComponent(overpassQuery(g[0], g[1], r))}`, 30000); }   // relay without /cycleroutes yet
+    const direct = async () => { const u = `${OVERPASS}?data=${encodeURIComponent(overpassQuery(g[0], g[1], r))}`;
+      try { return await get(u, 50000); } catch (e) { if (![429, 502, 504].includes(e.status)) throw e; await new Promise(ok => setTimeout(ok, 4000)); return get(u, 50000); } };   // busy: one retry
+    try { if (!RELAY) throw Object.assign(new Error('no relay'), {status: 404}); data = await get(`${RELAY}/cycleroutes?near=${g[0]},${g[1]}&radius=${r}`, 60000); }
+    catch (e) { if (e.status !== 404) throw e; data = await direct(); }   // relay without /cycleroutes yet
     return condenseRoutes(data);
   })().catch(() => { signedMemo.delete(key); return null; }));
   return signedMemo.get(key);
@@ -967,7 +969,7 @@ async function realRoute(p, stage){
     }
   }
   // fetch nearby signed cycle routes in the background, in case the new loop doesn't fit (or the rider asked for one)
-  const signedP = signedRoutesNear(start.c, Math.min(25, Math.max(8, targetKm*.35)));
+  const signedP = signedRoutesNear(start.c, targetKm > 60 ? 30 : 20);
   let feats, genErr = null;
   try {
     if (vias.length) feats = await viaFeatures(p, start, vias, target);
@@ -993,7 +995,7 @@ async function realRoute(p, stage){
   const poor = g => !g || Math.abs(g.properties.summary.distance - target)/target > .2 || viaMiss(g).some(m => m > 1500) || retraceShare(g) > .3 || (p.towards && towardsMiss(g) > 1.2);
   if (p.existing || poor(f)) {
     stage(1, 'Checking signed cycle routes');
-    const routes = await Promise.race([signedP, new Promise(r => setTimeout(() => r(null), p.existing ? 25000 : 15000))]);
+    const routes = await Promise.race([signedP, new Promise(r => setTimeout(() => r(null), p.existing ? 35000 : 20000))]);
     const cands = routes ? signedCandidates(routes, start, target, p) : [];
     const got = (await Promise.allSettled(cands.map(c => signedFeature(p, start, c)))).filter(r => r.status === 'fulfilled').map(r => r.value).filter(s => s.basedOn.follow >= .3);
     const sScore = s => score(s.f) - s.basedOn.follow*.5;     // reward loops that really ride the signed route
@@ -1410,6 +1412,7 @@ function modal(title, body, actions, kicker='Prototype'){
 function close(){ $('#modal').classList.remove('open'); }
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') close(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+if (navigator.permissions) navigator.permissions.query({name:'geolocation'}).then(st => { if (st.state === 'granted') getLocation().catch(() => {}); }).catch(() => {});
 // test handle for the prototype
 window.__rp = {signedRoutesNear, signedCandidates, signedFeature, condenseRoutes, retraceShare, generate, get current(){ return current; }};
 })();
