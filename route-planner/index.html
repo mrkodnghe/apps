@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Route planner prototype · Concept 4</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#000; --fg:#F2F2F2; --dim:rgba(242,242,242,.55); --faint:rgba(242,242,242,.4);
+  --red:#E5262C; --magenta:#B13EA4; --teal:#00C08D; --glass:rgba(255,255,255,.08); --line:rgba(255,255,255,.16);
+  --sans:'Geist',system-ui,-apple-system,sans-serif; --mono:'Geist Mono',ui-monospace,monospace;
+  --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:#050505;color:var(--fg);font-family:var(--sans)}
+body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+button,input{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--magenta);outline-offset:3px}
+
+.app{position:relative;width:100%;height:100dvh;max-width:430px;background:var(--bg);overflow:hidden}
+@media (min-width:600px) and (min-height:760px){
+  .app{width:393px;height:min(852px,94dvh);border-radius:48px;box-shadow:0 0 0 10px #161618,0 0 0 11px #2a2a2e,0 40px 120px rgba(0,0,0,.6)}
+}
+.mono{font-family:var(--mono);text-transform:uppercase;letter-spacing:.04em;font-size:12px;color:var(--faint)}
+
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;padding:calc(var(--safe-t) + 20px) 32px 0;
+  opacity:0;visibility:hidden;transform:translateY(12px);transition:opacity .45s ease,transform .45s ease,visibility 0s linear .45s}
+.screen.active{opacity:1;visibility:visible;transform:none;transition:opacity .45s ease,transform .45s ease}
+.scroll{overflow-y:auto;scrollbar-width:none}
+.scroll::-webkit-scrollbar{display:none}
+
+.icon-btn{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex:none}
+.icon-btn svg{width:20px;height:20px}
+.pill{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:13px 20px;border-radius:999px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);font-size:16px;font-weight:500;white-space:nowrap;transition:background .2s,transform .15s}
+.pill:active{transform:scale(.97);background:rgba(255,255,255,.14)}
+.topbar{display:flex;align-items:center;justify-content:space-between;min-height:48px;flex:none}
+.input{display:flex;align-items:center;gap:8px;height:64px;border-radius:32px;padding:0 6px 0 24px;background:rgba(255,255,255,.08);border:1px solid var(--line);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);flex:none}
+.input input{flex:1;min-width:0;background:none;border:0;outline:0;font-size:16px}
+.input input::placeholder{color:var(--faint)}
+.input .pre{color:var(--faint);margin-right:-2px}
+.mic{position:relative;width:48px;height:48px;border-radius:50%;background:var(--fg);display:grid;place-items:center;flex:none;transition:transform .15s}
+.mic:active{transform:scale(.94)}
+.mic svg{width:22px;height:22px}
+.mic .rec{position:absolute;top:7px;right:7px;width:7px;height:7px;border-radius:50%;background:var(--magenta)}
+.mic.listening{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 10px rgba(177,62,164,.25),0 0 30px rgba(177,62,164,.55)}}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.blink{animation:blink 1s steps(2,start) infinite}
+@keyframes blink{to{visibility:hidden}}
+.cta{width:100%;height:64px;border-radius:32px;background:var(--fg);color:#000;font-family:var(--mono);font-size:20px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:12px;transition:transform .15s;flex:none}
+.cta:active{transform:scale(.98)}
+.cta svg{width:20px;height:20px}
+
+/* ---------- Home ---------- */
+.headline{font-family:var(--mono);font-size:clamp(38px,12vw,48px);line-height:1.08;letter-spacing:-.02em;font-weight:400;margin:40px 0 18px}
+.cards{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;margin:36px -32px 0;padding:0;scrollbar-width:none;flex:none}
+.cards::-webkit-scrollbar{display:none}
+.card{position:relative;flex:0 0 100%;scroll-snap-align:center;height:346px;border-radius:44px;overflow:hidden;padding:32px}
+.card .mono{color:rgba(255,255,255,.8)}
+.card h2{font-family:var(--mono);font-size:clamp(25px,8vw,30px);line-height:1.18;font-weight:400;letter-spacing:-.02em;margin:10px 0 10px;color:#fff}
+.card .meta{font-family:var(--mono);font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#fff}
+.card .area{position:absolute;left:32px;right:32px;top:176px;height:62px}
+.card .area svg{width:100%;height:100%;display:block}
+.card .pill{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.35);font-weight:600}
+.card .pill:active{transform:translateX(-50%) scale(.97)}
+.pager{display:flex;gap:8px;justify-content:center;margin:18px 0;flex:none}
+.pager i{width:8px;height:8px;border-radius:4px;background:rgba(242,242,242,.35);transition:width .25s,background .25s}
+.pager i.on{width:20px;background:var(--fg)}
+#home .input{margin:auto 0 calc(var(--safe-b) + 32px)}
+
+/* ---------- Generating / Ready ---------- */
+.status{display:flex;align-items:center;gap:10px;margin-top:40px}
+.status .mono{color:rgba(242,242,242,.8)}
+.bignum{display:block;height:clamp(84px,27vw,112px);width:auto;max-width:100%;margin:26px 0 30px}
+.dotbar{display:flex;justify-content:space-between}
+.dotbar i{width:8px;height:8px;border-radius:50%;background:rgba(242,242,242,.14);transition:background .3s}
+.dotbar i.on{background:var(--fg)}
+.dotbar i.lead{background:var(--magenta);box-shadow:0 0 8px rgba(177,62,164,.8)}
+.axis{display:flex;justify-content:space-between;margin-top:14px}
+.axis .mono{font-size:12px}
+.quote{font-family:var(--mono);font-size:clamp(14px,4.2vw,16px);line-height:1.32;color:var(--fg);margin-top:40px}
+.panel{position:relative;margin:auto -32px 0;border-radius:40px 40px 0 0;padding:32px 32px calc(var(--safe-b) + 32px);flex:none}
+.panel.steps-panel{background:linear-gradient(180deg,#C56336 25%,#B52C55 100%)}
+.panel.ready-panel{background:linear-gradient(180deg,#434ACB 10%,#4CD861 100%)}
+.steps{list-style:none;display:flex;flex-direction:column;gap:22px}
+.step{display:flex;align-items:center;gap:16px;font-size:16px;font-weight:500;transition:opacity .3s}
+.step .ic{width:16px;height:16px;display:grid;place-items:center;flex:none}
+.step .lbl{flex:1}
+.step .meta{font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.02em;color:rgba(255,255,255,.8);text-align:right;opacity:0;transition:opacity .4s}
+.step.done .meta{opacity:1}
+.step.pending{opacity:.45;font-weight:400}
+.step.pending .ic i{width:10px;height:10px;border-radius:50%;border:1.5px solid rgba(255,255,255,.9)}
+.step.active .ic i{width:8px;height:8px;border-radius:50%;background:#fff}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0 28px}
+.chip{font-family:var(--mono);font-size:11px;text-transform:uppercase;padding:8px 10px;border-radius:999px;background:rgba(255,255,255,.2);color:rgba(255,255,255,.85)}
+
+/* ---------- Route ---------- */
+#route{padding:0}
+.map{position:absolute;left:0;right:0;top:0;height:46%;background:#0B0B0B}
+.map::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;background-image:radial-gradient(rgba(242,242,242,.10) 1px,transparent 1.2px);background-size:18px 18px;mix-blend-mode:screen}
+.map-msg{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;text-align:center;padding:24px}
+.attrib{position:absolute;right:14px;bottom:44px;z-index:2;font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:rgba(242,242,242,.4);text-transform:uppercase;pointer-events:none}
+.map-top{position:absolute;left:32px;right:32px;top:calc(var(--safe-t) + 24px);display:flex;align-items:center;justify-content:space-between;z-index:3;pointer-events:none}
+.map-top > *{pointer-events:auto}
+.map-top .icon-btn,.title-chip{background:rgba(0,0,0,.5)}
+.title-chip{padding:12px 16px;border-radius:999px;border:1px solid var(--line);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);color:rgba(242,242,242,.85)}
+.sheet{position:absolute;left:0;right:0;bottom:0;top:calc(46% - 32px);border-radius:40px 40px 0 0;overflow:hidden;background:#111;z-index:4}
+.sheet .inner{height:100%;padding:12px 32px calc(var(--safe-b) + 24px)}
+.handle{width:36px;height:4px;border-radius:2px;background:rgba(242,242,242,.3);margin:0 auto 20px}
+.row{display:flex;justify-content:space-between;align-items:baseline}
+.stats{display:grid;grid-template-columns:repeat(3,auto);justify-content:space-between;margin:20px 0 24px}
+.stat{display:flex;flex-direction:column;align-items:flex-end}
+.stat svg{height:clamp(24px,7.6vw,30px);width:auto;display:block;margin-bottom:8px}
+.elev{display:block;width:100%;height:auto;overflow:visible}
+.legend{display:flex;justify-content:space-between;margin-top:14px}
+.legend span{display:flex;align-items:center;gap:8px}
+.legend i{width:8px;height:8px;border-radius:50%;background:var(--fg)}
+#route .dotbar{margin-top:24px}
+#refineForm{margin:28px 0 16px}
+.mk{position:relative}
+.mk-start{width:22px;height:22px;border-radius:50%;background:var(--teal);border:3px solid #fff;box-shadow:0 0 0 2px rgba(0,0,0,.4)}
+.mk-summit{width:12px;height:12px;border-radius:50%;background:#fff;border:3px solid #111}
+.mk-cafe{width:16px;height:16px;border-radius:50%;background:#111;border:3px solid #fff}
+.tag{display:flex;align-items:center;gap:7px;padding:6px 10px;border-radius:999px;background:rgba(0,0,0,.62);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);font-family:var(--mono);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:rgba(242,242,242,.9);white-space:nowrap;pointer-events:none}
+.tag .dot{width:6px;height:6px;background:var(--red)}
+.vlabel{font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:rgba(242,242,242,.42);white-space:nowrap;pointer-events:none;text-shadow:0 0 4px #000}
+.vlabel.town{font-size:10px;color:rgba(242,242,242,.6)}
+.fade-in{animation:fin .5s ease both}
+@keyframes fin{from{opacity:0;transform:scale(.6)}}
+
+/* minimal MapLibre CSS (stylesheets can only be inlined here) */
+.maplibregl-map{position:relative;overflow:hidden;width:100%;height:100%;-webkit-tap-highlight-color:transparent}
+.maplibregl-canvas-container,.maplibregl-canvas{position:absolute;left:0;top:0}
+.maplibregl-canvas:focus{outline:none}
+.maplibregl-canvas-container.maplibregl-interactive{cursor:grab}
+.maplibregl-canvas-container.maplibregl-interactive:active{cursor:grabbing}
+.maplibregl-marker{position:absolute;left:0;top:0;will-change:transform}
+.maplibregl-control-container{display:none}
+
+/* Toast + modal */
+.toast{position:absolute;left:50%;bottom:calc(var(--safe-b) + 110px);transform:translate(-50%,20px);opacity:0;padding:12px 18px;border-radius:999px;background:rgba(30,30,34,.94);border:1px solid var(--line);font-size:14px;white-space:nowrap;z-index:50;pointer-events:none;transition:all .3s;max-width:90%;overflow:hidden;text-overflow:ellipsis}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.modal{position:absolute;inset:0;z-index:40;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;opacity:0;visibility:hidden;transition:opacity .3s,visibility 0s .3s}
+.modal.open{opacity:1;visibility:visible;transition:opacity .3s}
+.modal .box{width:100%;border-radius:36px 36px 0 0;background:#151515;border:1px solid var(--line);border-bottom:0;padding:28px 28px calc(var(--safe-b) + 28px);transform:translateY(30px);transition:transform .3s}
+.modal.open .box{transform:none}
+.modal h3{font-family:var(--mono);font-size:22px;font-weight:400;margin:10px 0 12px}
+.modal p{color:rgba(242,242,242,.7);line-height:1.45;font-size:15px;margin-bottom:12px}
+.modal textarea{width:100%;height:150px;border-radius:16px;background:#000;border:1px solid var(--line);color:var(--dim);font-family:var(--mono);font-size:10px;padding:12px;resize:none;margin-bottom:14px}
+.modal .opts{display:grid;gap:8px;margin:6px 0 14px}
+.modal .opt{display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-radius:20px;background:rgba(255,255,255,.06);border:1px solid var(--line);font-size:16px;font-weight:500;text-align:left}
+.modal .opt span{font-family:var(--mono);font-size:11px;color:var(--faint);text-transform:uppercase}
+.modal .actions{display:flex;gap:8px}
+.modal .actions .pill{flex:1}
+.modal .actions .solid{background:var(--fg);color:#000;border-color:var(--fg)}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ================= HOME ================= -->
+  <section class="screen active" id="home" aria-label="Plan a route">
+    <div class="topbar">
+      <button class="icon-btn" id="aboutBtn" aria-label="About this prototype"><svg viewBox="0 0 24 24" fill="none"><path d="M4 9h16M4 15h10" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round"/></svg></button>
+      <span class="mono" id="today">Today</span>
+      <button class="icon-btn" id="profileBtn" aria-label="Profile"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#F2F2F2" stroke-width="2"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round"/></svg></button>
+    </div>
+    <h1 class="headline">Where are we going today?</h1>
+    <p class="mono">Describe the route. Get it in seconds.</p>
+    <div class="cards" id="cards"></div>
+    <div class="pager" id="pager"></div>
+    <form class="input" id="promptForm" autocomplete="off">
+      <input id="promptInput" type="text" placeholder="Describe your route…" enterkeyhint="go" aria-label="Describe your route">
+      <button class="mic" id="micBtn" type="button" aria-label="Speak your route"></button>
+    </form>
+  </section>
+
+  <!-- ================= GENERATING ================= -->
+  <section class="screen" id="gen" aria-label="Generating route">
+    <div class="topbar"><button class="pill" id="cancelBtn">Cancel</button><span class="mono rideType">Road ride</span></div>
+    <div class="status"><span class="dot blink" style="background:var(--magenta)"></span><span class="mono" id="genLabel">Generating your route</span></div>
+    <svg class="bignum" id="genNum" aria-live="polite"></svg>
+    <div class="dotbar" id="genBar"></div>
+    <div class="axis"><span class="mono" id="genEta">Est. 6 sec</span><span class="mono" id="genStep">Step 1/5</span></div>
+    <p class="quote" id="genQuote"></p>
+    <div class="panel steps-panel"><ol class="steps" id="steps"></ol></div>
+  </section>
+
+  <!-- ================= READY ================= -->
+  <section class="screen" id="ready" aria-label="Route ready">
+    <div class="topbar"><button class="pill" id="editBtn">Edit prompt</button><span class="mono rideType">Road ride</span></div>
+    <div class="status"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke="#00C08D" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="mono">Your route is ready</span></div>
+    <svg class="bignum" id="readyNum"></svg>
+    <div class="dotbar" id="readyBar"></div>
+    <div class="axis"><span class="mono" id="readyTime">Built in 6.2 sec</span><span class="mono">Step 5/5</span></div>
+    <p class="quote" id="readyQuote"></p>
+    <div class="panel ready-panel">
+      <div class="step done"><span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="lbl">Route is ready to use</span><span class="meta" id="readyKind">Loop</span></div>
+      <div class="chips" id="readyChips"></div>
+      <button class="cta" id="viewBtn">View route <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
+  </section>
+
+  <!-- ================= ROUTE ================= -->
+  <section class="screen" id="route" aria-label="Route details">
+    <div class="map" id="mapWrap"><div id="map" style="position:absolute;inset:0"></div><span class="attrib" id="attrib"></span></div>
+    <div class="map-top">
+      <button class="icon-btn" id="backBtn" aria-label="Back to start"><svg viewBox="0 0 24 24" fill="none"><path d="m15 18-6-6 6-6" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <span class="mono title-chip" id="routeTitle">Your loop</span>
+      <button class="icon-btn" id="penBtn" aria-label="Edit prompt"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" stroke="#F2F2F2" stroke-width="2" stroke-linejoin="round"/><path d="m13.5 6.5 4 4" stroke="#F2F2F2" stroke-width="2"/></svg></button>
+    </div>
+    <div class="sheet">
+      <div class="inner scroll">
+        <div class="handle"></div>
+        <div class="row"><span class="mono rideType" style="color:rgba(242,242,242,.8)">Road ride</span><span class="mono" id="genAgo">Generated just now</span></div>
+        <div class="stats" id="stats"></div>
+        <svg class="elev" id="elev" viewBox="0 0 329 72" role="img" aria-label="Elevation profile"></svg>
+        <div class="axis"><span class="mono">0 km</span><span class="mono" id="climbLbl"></span><span class="mono" id="distLbl"></span></div>
+        <div class="dotbar" id="surface"></div>
+        <div class="legend mono" id="legend"></div>
+        <form class="input" id="refineForm" autocomplete="off">
+          <span class="pre">Refine:</span>
+          <input id="refineInput" type="text" placeholder="“Make 10km shorter”" enterkeyhint="go" aria-label="Refine the route">
+          <button class="mic" id="refineMic" type="button" aria-label="Speak a refinement"></button>
+        </form>
+        <button class="cta" id="exportBtn">Export route <svg viewBox="0 0 24 24" fill="none"><path d="M7 17 17 7M8 7h9v9" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+    </div>
+  </section>
+
+  <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="box"><span class="mono" id="modalKicker">Prototype</span><h3 id="modalTitle"></h3><div id="modalBody"></div><div class="actions" id="modalActions"></div></div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" onerror="var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js';document.head.appendChild(s)"></script>
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+/* ---------- Dot-matrix numerals ---------- */
+const GLYPHS = {
+  '0':['01110','10001','10011','10101','11001','10001','01110'],'1':['00100','01100','00100','00100','00100','00100','01110'],
+  '2':['01110','10001','00001','00010','00100','01000','11111'],'3':['11111','00010','00100','00010','00001','10001','01110'],
+  '4':['00010','00110','01010','10010','11111','00010','00010'],'5':['11111','10000','11110','00001','00001','10001','01110'],
+  '6':['00110','01000','10000','11110','10001','10001','01110'],'7':['11111','00001','00010','00100','01000','01000','01000'],
+  '8':['01110','10001','10001','01110','10001','10001','01110'],'9':['01110','10001','10001','01111','00001','00010','01100'],
+  '%':['11001','11010','00010','00100','01000','01011','10011'],':':['00000','01100','01100','00000','01100','01100','00000']
+};
+function dotNum(svg, str, ghost = .12) {
+  const S = 11, D = 8, cw = 6*S; let out = '';
+  [...str].forEach((ch, ci) => { const g = GLYPHS[ch]; if (!g) return; const dim = ch === '%' ? .45 : 1;
+    g.forEach((row, y) => [...row].forEach((b, x) => { out += `<circle cx="${ci*cw + x*S + D/2}" cy="${y*S + D/2}" r="${D/2}" fill="#F2F2F2" fill-opacity="${b === '1' ? dim : ghost}"/>`; })); });
+  svg.setAttribute('viewBox', `0 0 ${str.length*cw - S - 3} ${7*S - 3}`); svg.innerHTML = out;
+}
+
+/* ---------- Seeded random ---------- */
+function hash(s){let h=2166136261;for(const c of s){h^=c.charCodeAt(0);h=Math.imul(h,16777619);}return h>>>0;}
+function rng(seed){let a=seed||1;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+/* ---------- Places (approximate real coordinates) ---------- */
+const AREAS = {
+  surrey:{name:'Surrey',c:[-0.331,51.2325]}, 'box hill':{name:'Box Hill',c:[-0.31,51.252]}, kent:{name:'Kent',c:[0.19,51.272]},
+  sussex:{name:'Sussex',c:[0.009,50.873]}, chilterns:{name:'Chilterns',c:[-0.742,51.763]}, cotswolds:{name:'Cotswolds',c:[-1.724,51.93]},
+  'peak district':{name:'Peak District',c:[-1.677,53.214]}, yorkshire:{name:'Yorkshire',c:[-1.541,53.993]}, richmond:{name:'Richmond',c:[-0.30,51.461]},
+  guildford:{name:'Guildford',c:[-0.570,51.236]}, dorking:{name:'Dorking',c:[-0.331,51.2325]}, essex:{name:'Essex',c:[0.47,51.73]},
+  hertfordshire:{name:'Hertfordshire',c:[-0.30,51.80]}, hampshire:{name:'Hampshire',c:[-1.31,51.06]}, oxfordshire:{name:'Oxfordshire',c:[-1.26,51.75]},
+  'lake district':{name:'Lake District',c:[-3.09,54.43]}, snowdonia:{name:'Snowdonia',c:[-3.93,53.07]}, wales:{name:'Wales',c:[-3.6,52.4]},
+  devon:{name:'Devon',c:[-3.75,50.6]}, cornwall:{name:'Cornwall',c:[-5.05,50.27]}, london:{name:'London',c:[-0.12,51.507]}
+};
+const SURREY_VILLAGES = [
+  ['Dorking',-0.3310,51.2325,1],['Box Hill',-0.3100,51.2560],['Leatherhead',-0.3290,51.2966,1],['Guildford',-0.5704,51.2362,1],
+  ['Shere',-0.4538,51.2203],['Gomshall',-0.4380,51.2186],['Abinger Hammer',-0.4190,51.2120],['Reigate',-0.2050,51.2378,1],
+  ['Betchworth',-0.2680,51.2350],['Ranmore',-0.3700,51.2440],['Effingham',-0.3990,51.2690],['Peaslake',-0.4440,51.1890],
+  ['Holmbury St Mary',-0.4170,51.1830],['Ockley',-0.3600,51.1500],['Capel',-0.3200,51.1490],['Newdigate',-0.2840,51.1640],
+  ['Westcott',-0.3700,51.2250],['Headley',-0.2780,51.2850],['Epsom',-0.2690,51.3360,1],['Cranleigh',-0.4900,51.1410,1],
+  ['East Horsley',-0.4300,51.2730],['Bookham',-0.3720,51.2790],['Brockham',-0.2850,51.2330],['Leith Hill',-0.3720,51.1760]
+];
+
+/* ---------- Prompt parsing ---------- */
+const CAFES = ['Grind & Gears','The Chain Gang','Velo Café','Spokes & Beans','Pedal & Pour','The Climb Café'];
+function parsePrompt(text) {
+  const t = text.toLowerCase(), p = { text, seed: hash(text) };
+  const km = t.match(/(\d+(?:\.\d+)?)\s*(km|k)\b/), mi = t.match(/(\d+(?:\.\d+)?)\s*(miles?|mi)\b/), hrs = t.match(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|h)\b/);
+  const elev = t.match(/(\d{2,4})\s*(?:[-–to]+\s*(\d{2,4}))?\s*m(?:etres|eters)?\b(?!\s*(?:in|ile))/);
+  p.type = /gravel/.test(t) ? 'Gravel' : /(mtb|mountain bike|trail|singletrack)/.test(t) ? 'MTB' : 'Road';
+  const speed = {Road:26, Gravel:20, MTB:14}[p.type];
+  p.dist = km ? +km[1] : mi ? Math.round(+mi[1]*1.609) : hrs ? Math.round(+hrs[1]*speed*.85) : 50;
+  p.dist = Math.max(5, Math.min(250, Math.round(p.dist)));
+  if (elev && !(km && elev[0].includes(km[0]))) p.elev = elev[2] ? Math.round((+elev[1] + +elev[2]) / 2) : +elev[1];
+  else p.elev = Math.round(p.dist * (/(hill|climb|mountain|lumpy)/.test(t) ? 14 : /(flat|easy|recovery)/.test(t) ? 3 : 6));
+  p.cafe = !/(no (café|cafe|coffee|stop))/.test(t);
+  p.quiet = /(quiet|busy|traffic|main road)/.test(t);
+  const key = Object.keys(AREAS).sort((a,b)=>b.length-a.length).find(k => t.includes(k));
+  p.areaKey = key || 'surrey'; p.place = key ? AREAS[key].name : null;
+  return p;
+}
+
+/* ---------- Geometry helpers (work in km around an origin, then convert) ---------- */
+const KM_LAT = 110.57;
+const toLL = (o, [x,y]) => [o[0] + x/(111.32*Math.cos(o[1]*Math.PI/180)), o[1] + y/KM_LAT];
+const toKm = (o, [lon,lat]) => [(lon-o[0])*111.32*Math.cos(o[1]*Math.PI/180), (lat-o[1])*KM_LAT];
+const dKm = (a,b) => Math.hypot(a[0]-b[0], a[1]-b[1]);
+function catmullClosed(pts, per){ const n=pts.length, out=[];
+  for(let i=0;i<n;i++){ const p0=pts[(i-1+n)%n],p1=pts[i],p2=pts[(i+1)%n],p3=pts[(i+2)%n];
+    for(let s=0;s<per;s++){ const t=s/per,t2=t*t,t3=t2*t;
+      out.push([0,1].map(k=>.5*((2*p1[k])+(-p0[k]+p2[k])*t+(2*p0[k]-5*p1[k]+4*p2[k]-p3[k])*t2+(-p0[k]+3*p1[k]-3*p2[k]+p3[k])*t3))); } }
+  return out; }
+function noisyLine(r, a, b, amp, steps=24){ const ph=[r()*6,r()*6,r()*6], L=dKm(a,b), nx=-(b[1]-a[1])/L, ny=(b[0]-a[0])/L, out=[];
+  for(let i=0;i<=steps;i++){ const t=i/steps, n=(Math.sin(t*5+ph[0])*.6+Math.sin(t*11+ph[1])*.3+Math.sin(t*23+ph[2])*.12)*Math.sin(Math.PI*t)*amp;
+    out.push([a[0]+(b[0]-a[0])*t+nx*n, a[1]+(b[1]-a[1])*t+ny*n]); } return out; }
+function blob(r, c, R){ const pts=[]; const n=9; for(let i=0;i<n;i++){ const a=i/n*Math.PI*2, rr=R*(.6+r()*.6); pts.push([c[0]+Math.cos(a)*rr, c[1]+Math.sin(a)*rr]); }
+  const ring=catmullClosed(pts,5); ring.push(ring[0]); return ring; }
+const polyLen = pts => pts.reduce((s,p,i)=>i?s+dKm(pts[i-1],p):0,0);
+
+/* ---------- Route + world generation ---------- */
+function buildRoute(p) {
+  const r = rng(p.seed);
+  const speed = {Road:26, Gravel:20, MTB:14}[p.type];
+  const mins = Math.round(p.dist / speed * 60 + (p.cafe ? 20 : 0));
+  const climbLen = +(Math.min(p.dist*.12, 2 + r()*4)).toFixed(1);
+  const climbGrad = Math.max(2, Math.min(12, Math.round(p.elev / p.dist / 1.4 + 2 + r()*2)));
+  const asphalt = p.type === 'Road' ? 80 + Math.round(r()*12) : p.type === 'Gravel' ? 35 + Math.round(r()*15) : 15 + Math.round(r()*10);
+  const gravel = p.type === 'Road' ? Math.round(r()*5) + 2 : 100 - asphalt - (5 + Math.round(r()*8));
+  const paved = 100 - asphalt - gravel;
+  const cafeFrac = .35 + r()*.2;
+  const origin = AREAS[p.areaKey].c;
+  // loop in km space
+  const R = p.dist / (2*Math.PI) * .82, cx = (r()-.5)*R*.7, cy = (r()-.5)*R*.7, rot = r()*Math.PI*2, N = 9, ctrl = [];
+  for (let i=0;i<N;i++){ const a = rot + i/N*Math.PI*2 + (r()-.5)*.45, rr = R*(.68 + r()*.5); ctrl.push([cx + Math.cos(a)*rr, cy + Math.sin(a)*rr*.85]); }
+  let pts = catmullClosed(ctrl, 26); const ph1 = r()*6, ph2 = r()*6;
+  pts = pts.map((pt,i) => { const a = pts[(i-1+pts.length)%pts.length], b = pts[(i+1)%pts.length], L = dKm(a,b)||1, nx = -(b[1]-a[1])/L, ny = (b[0]-a[0])/L;
+    const w = (Math.sin(i*.33+ph1)*.22 + Math.sin(i*.85+ph2)*.07) * Math.max(.4, R/8); return [pt[0]+nx*w, pt[1]+ny*w]; });
+  for (let k=0;k<2;k++){ const len = polyLen([...pts, pts[0]]), f = p.dist/len; pts = pts.map(([x,y]) => [cx+(x-cx)*f, cy+(y-cy)*f]); }
+  pts.push(pts[0]);
+  // elevation profile
+  const climbAt = .12 + r()*.18, phase = r()*6, prof = [];
+  for (let i=0;i<64;i++){ const x=i/63; prof.push(Math.min(1, .2 + .06*Math.sin(i*.6+phase) + .04*Math.sin(i*.21+phase*2) + Math.min(.7,.25+p.elev/1600)*Math.exp(-((x-climbAt)**2)/.005) + .22*Math.exp(-((x-.68)**2)/.012)*(p.elev>300?1:.5))); }
+  const peak = prof.indexOf(Math.max(...prof)), peakFrac = peak/63;
+  const climbStartFrac = Math.max(0, peakFrac - Math.max(.04, climbLen/p.dist*1.6));
+  const at = f => pts[Math.min(pts.length-1, Math.round(f*(pts.length-1)))];
+  const world = buildWorld(r, p, pts, R, [cx,cy], origin);
+  const ll = q => toLL(origin, q);
+  return {
+    p, mins, climbLen, climbGrad, asphalt, paved, gravel, prof, peak, cafeFrac, climbStartFrac, peakFrac,
+    cafeKm: Math.round(p.dist*cafeFrac), segments: 120 + Math.round(r()*220), cafeName: CAFES[Math.floor(r()*CAFES.length)],
+    summit: Math.round(80 + p.elev*.55 + r()*60),
+    title: p.place ? `${p.place} loop` : 'Your loop',
+    line: pts.map(ll),
+    climb: pts.slice(Math.round(climbStartFrac*(pts.length-1)), Math.round(peakFrac*(pts.length-1))+1).map(ll),
+    start: ll(pts[0]), summitAt: ll(at(peakFrac)), cafeAt: ll(at(cafeFrac)),
+    world, origin
+  };
+}
+
+function buildWorld(r, p, route, R, ctr, origin){
+  const feats = [], E = Math.max(14, R*2.8), ll = q => toLL(origin, q);
+  const add = (kind, geom, extra={}) => feats.push({type:'Feature', properties:{kind, ...extra}, geometry:geom});
+  const line = (kind, pts, cls) => add(kind, {type:'LineString', coordinates:pts.map(ll)}, {cls});
+  const poly = (kind, ring) => add(kind, {type:'Polygon', coordinates:[ring.map(ll)]});
+  const rp = () => [(r()*2-1)*E, (r()*2-1)*E];
+  // woods, water
+  for (let i=0;i<26;i++) poly('wood', blob(r, rp(), .5 + r()*2.2));
+  for (let i=0;i<3;i++) poly('water', blob(r, rp(), .25 + r()*.6));
+  const side = r() < .5 ? -1 : 1;
+  line('river', noisyLine(r, [-E*1.2, side*E*(.2+r()*.5)], [E*1.2, -side*E*(r()*.6)], E*.25, 60));
+  // villages: real names for Surrey, otherwise none (centre label only)
+  const villages = [];
+  if (['surrey','box hill','dorking','guildford'].includes(p.areaKey)) {
+    const minD = Math.max(2.5, E*.17);
+    [...SURREY_VILLAGES].sort((a,b) => (b[3]||0) - (a[3]||0)).forEach(([n,lon,lat,town]) => { const k = toKm(origin,[lon,lat]);
+      if (Math.abs(k[0])<E && Math.abs(k[1])<E && villages.every(v => dKm(v.k,k) > minD)) villages.push({n, k, town:!!town}); });
+  } else villages.push({n: AREAS[p.areaKey].name, k:[0,0], town:true});
+  villages.forEach(v => { poly('built', blob(r, v.k, v.town ? 1 + r()*.8 : .35 + r()*.35));
+    const spokes = v.town ? 6 : 4;
+    for (let i=0;i<spokes;i++){ const a = r()*Math.PI*2, L = 2 + r()*(v.town?7:4); line('road', noisyLine(r, v.k, [v.k[0]+Math.cos(a)*L, v.k[1]+Math.sin(a)*L], L*.12, 16), i<2&&v.town?'major':(i<2?'secondary':'minor')); } });
+  // through-roads
+  const edge = () => { const s = Math.floor(r()*4), u = (r()*2-1)*E; return s===0?[-E*1.2,u]:s===1?[E*1.2,u]:s===2?[u,-E*1.2]:[u,E*1.2]; };
+  line('road', noisyLine(r, [-E*1.3, (r()<.5?1:-1)*E*(.5+r()*.4)], [E*1.3, (r()<.5?1:-1)*E*(.5+r()*.4)], E*.1, 40), 'motorway');
+  for (let i=0;i<5;i++) line('road', noisyLine(r, edge(), edge(), E*.15, 40), 'major');
+  for (let i=0;i<8;i++) line('road', noisyLine(r, edge(), edge(), E*.2, 40), 'secondary');
+  for (let i=0;i<55;i++){ const a = rp(), ang = r()*Math.PI*2, L = 1.5 + r()*5; line('road', noisyLine(r, a, [a[0]+Math.cos(ang)*L, a[1]+Math.sin(ang)*L], L*.15, 12), 'minor'); }
+  // the route rides on real-looking lanes: the loop itself plus side lanes leaving it
+  line('road', route, 'secondary');
+  for (let i=0;i<route.length-1;i+=9){ const a = route[i], b = route[i+1], L = dKm(a,b)||1, s = r()<.5?1:-1, len = 1 + r()*4;
+    line('road', noisyLine(r, a, [a[0]-(b[1]-a[1])/L*len*s, a[1]+(b[0]-a[0])/L*len*s], len*.15, 10), 'minor'); }
+  return { fc:{type:'FeatureCollection', features:feats}, labels: villages.map(v => ({n:v.n, town:v.town, ll:ll(v.k)})) };
+}
+
+/* ---------- MapLibre ---------- */
+const LIVE_STYLE = 'https://tiles.openfreemap.org/styles/dark';   // used automatically when the page is hosted where it can reach it
+const W = (z0, w0, z1, w1) => ['interpolate',['exponential',1.6],['zoom'],z0,w0,z1,w1];
+function offlineStyle(){
+  return { version:8, sources:{ world:{ type:'geojson', data:{type:'FeatureCollection',features:[]} } },
+    layers:[
+      {id:'bg', type:'background', paint:{'background-color':'#0B0B0B'}},
+      {id:'built', type:'fill', source:'world', filter:['==',['get','kind'],'built'], paint:{'fill-color':'#171717'}},
+      {id:'wood', type:'fill', source:'world', filter:['==',['get','kind'],'wood'], paint:{'fill-color':'#15201A','fill-opacity':.9}},
+      {id:'water', type:'fill', source:'world', filter:['==',['get','kind'],'water'], paint:{'fill-color':'#0E1A22'}},
+      {id:'river', type:'line', source:'world', filter:['==',['get','kind'],'river'], paint:{'line-color':'#0E1A22','line-width':W(8,1.5,15,10)}, layout:{'line-cap':'round','line-join':'round'}},
+      {id:'road-minor', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'minor']], paint:{'line-color':'#222222','line-width':W(9,.6,15,6)}, layout:{'line-cap':'round','line-join':'round'}},
+      {id:'road-sec', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'secondary']], paint:{'line-color':'#2C2C2C','line-width':W(8,.9,15,9)}, layout:{'line-cap':'round','line-join':'round'}},
+      {id:'road-major', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'major']], paint:{'line-color':'#363636','line-width':W(7,1.2,15,12)}, layout:{'line-cap':'round','line-join':'round'}},
+      {id:'road-mway', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'motorway']], paint:{'line-color':'#414141','line-width':W(6,1.6,15,16)}, layout:{'line-cap':'round','line-join':'round'}}
+    ]};
+}
+let map = null, mapReady = null, live = false, markers = [];
+function ensureMap(){
+  if (mapReady) return mapReady;
+  mapReady = new Promise(async (resolve) => {
+    let tries = 0; while (!window.maplibregl && tries++ < 60) await new Promise(r => setTimeout(r, 100));
+    if (!window.maplibregl) { $('#map').innerHTML = '<div class="map-msg">MapLibre couldn’t load on this network</div>'; resolve(null); return; }
+    let style = offlineStyle();
+    try { const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 2500);
+      const res = await fetch(LIVE_STYLE, {signal: ctl.signal}); clearTimeout(to); if (res.ok) { style = LIVE_STYLE; live = true; } } catch (e) { /* blocked or offline: use built-in dark style */ }
+    map = new maplibregl.Map({ container:'map', style, center:[-0.33,51.23], zoom:10, attributionControl:false, pitchWithRotate:false, dragRotate:false, fadeDuration:0 });
+    map.touchZoomRotate.disableRotation();
+    $('#attrib').textContent = live ? '© OpenFreeMap © OpenStreetMap' : 'MapLibre GL · dark · demo geography';
+    map.on('load', () => {
+      map.addSource('route', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
+      map.addSource('climb', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
+      const L = {'line-cap':'round','line-join':'round'};
+      map.addLayer({id:'route-glow', type:'line', source:'route', paint:{'line-color':'#ffffff','line-opacity':.16,'line-width':W(8,8,15,22),'line-blur':6}, layout:L});
+      map.addLayer({id:'route-casing', type:'line', source:'route', paint:{'line-color':'#000000','line-opacity':.75,'line-width':W(8,6,15,14)}, layout:L});
+      map.addLayer({id:'route-line', type:'line', source:'route', paint:{'line-color':'#F2F2F2','line-width':W(8,3,15,7)}, layout:L});
+      map.addLayer({id:'climb-line', type:'line', source:'climb', paint:{'line-color':'#E5262C','line-width':W(8,3,15,7),'line-opacity':0}, layout:L});
+      resolve(map);
+    });
+    window.addEventListener('resize', () => map && map.resize());
+  });
+  return mapReady;
+}
+const lineFC = coords => ({type:'FeatureCollection', features:[{type:'Feature', properties:{}, geometry:{type:'LineString', coordinates:coords}}]});
+function el(cls, html=''){ const d = document.createElement('div'); d.className = cls; d.innerHTML = html; return d; }
+async function renderMap(R){
+  const m = await ensureMap(); if (!m) return;
+  m.resize();
+  markers.forEach(mk => mk.remove()); markers = [];
+  if (!live) m.getSource('world').setData(R.world.fc);
+  m.getSource('climb').setData(lineFC([])); m.setPaintProperty('climb-line','line-opacity',0);
+  const b = R.line.reduce((bb,[x,y]) => [[Math.min(bb[0][0],x),Math.min(bb[0][1],y)],[Math.max(bb[1][0],x),Math.max(bb[1][1],y)]], [[180,90],[-180,-90]]);
+  const h = $('#mapWrap').clientHeight;
+  m.fitBounds(b, {padding:{top:Math.min(100,h*.27), bottom:62, left:40, right:40}, duration:0});
+  if (!live) R.world.labels.forEach(l => markers.push(new maplibregl.Marker({element:el('vlabel'+(l.town?' town':''), l.n)}).setLngLat(l.ll).addTo(m)));
+  // draw-on animation
+  const n = R.line.length, t0 = performance.now(), dur = 1500;
+  const step = now => { const t = Math.min(1, (now - t0)/dur), e = 1 - Math.pow(1-t, 3), k = Math.max(2, Math.round(e*n));
+    m.getSource('route').setData(lineFC(R.line.slice(0, k)));
+    if (t < 1) requestAnimationFrame(step); else finish(); };
+  requestAnimationFrame(step);
+  function finish(){
+    m.getSource('climb').setData(lineFC(R.climb)); m.setPaintProperty('climb-line','line-opacity',1);
+    const add = (node, ll, opts={}) => markers.push(new maplibregl.Marker({element:node, ...opts}).setLngLat(ll).addTo(m));
+    if (R.p.cafe) { add(el('mk mk-cafe fade-in'), R.cafeAt); add(el('tag fade-in', `Café · km ${R.cafeKm}`), R.cafeAt, {anchor:'left', offset:[14,-16]}); }
+    add(el('mk mk-summit fade-in'), R.summitAt);
+    add(el('tag fade-in', `<span class="dot"></span>${R.summit} m`), R.summitAt, {anchor:'top', offset:[0,12]});
+    add(el('mk mk-start fade-in'), R.start);
+    add(el('tag fade-in', 'Start · Finish'), R.start, {anchor:'top-right', offset:[-6,14]});
+  }
+}
+
+/* ---------- Sheet ---------- */
+function smoothPath(pts){ let d = `M${pts[0][0]} ${pts[0][1]}`; for (let i=1;i<pts.length;i++){ const [x0,y0]=pts[i-1],[x1,y1]=pts[i],mx=(x0+x1)/2; d += ` Q${x0} ${y0} ${mx} ${(y0+y1)/2}`; } const l=pts[pts.length-1]; return d + ` L${l[0]} ${l[1]}`; }
+function areaChart(prof, w, h, top=6){ return prof.map((v,i) => [+(i/(prof.length-1)*w).toFixed(1), +(top + (1-v)*(h-top)).toFixed(1)]); }
+function renderSheet(R){
+  $$('.rideType').forEach(e => e.textContent = R.p.type + ' ride');
+  $('#routeTitle').textContent = R.title;
+  const hh = Math.floor(R.mins/60), mm = String(R.mins%60).padStart(2,'0');
+  const vals = [[String(R.p.dist),'km'],[String(R.p.elev),'m elev'],[`${hh}:${mm}`,'hrs']];
+  $('#stats').innerHTML = vals.map(([v,u]) => `<div class="stat"><svg aria-label="${v} ${u}"></svg><span class="mono">${u}</span></div>`).join('');
+  $$('#stats svg').forEach((s,i) => dotNum(s, vals[i][0], .1));
+  const w = 329, h = 72, pts = areaChart(R.prof, w, h - 8);
+  const cs = Math.round(R.climbStartFrac*(pts.length-1)), pk = R.peak, cafe = pts[Math.round(R.cafeFrac*(pts.length-1))];
+  const line = smoothPath(pts);
+  $('#elev').innerHTML = `<defs>
+      <linearGradient id="eg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#B13EA4"/><stop offset="1" stop-color="#00C08D"/></linearGradient>
+      <linearGradient id="ef" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset="1" stop-color="#fff" stop-opacity=".08"/></linearGradient>
+      <mask id="em"><rect width="${w}" height="${h}" fill="url(#ef)"/></mask></defs>
+    <path d="${line} L${w} ${h} L0 ${h} Z" fill="url(#eg)" mask="url(#em)"/>
+    <path d="${line}" fill="none" stroke="#F2F2F2" stroke-width="1.5"/>
+    <path d="${smoothPath(pts.slice(cs, pk+1))}" fill="none" stroke="#E5262C" stroke-width="2.5" stroke-linecap="round"/>
+    ${R.p.cafe ? `<circle cx="${cafe[0]}" cy="${cafe[1]}" r="4.5" fill="#fff" stroke="#111" stroke-width="2"/>` : ''}`;
+  $('#climbLbl').textContent = `Climb ${R.climbLen}km · ${R.climbGrad}%`;
+  $('#distLbl').textContent = `${R.p.dist}km`;
+  const n = 30, a = Math.round(R.asphalt/100*n), pv = Math.round(R.paved/100*n);
+  $('#surface').innerHTML = Array.from({length:n},(_,i)=>`<i style="background:rgba(242,242,242,${i<a?1:i<a+pv?.45:.18})"></i>`).join('');
+  $('#legend').innerHTML = `<span><i></i>Asphalt ${R.asphalt}%</span><span><i style="opacity:.45"></i>Paved ${R.paved}%</span><span><i style="opacity:.18"></i>Gravel ${R.gravel}%</span>`;
+  $('#genAgo').textContent = 'Generated just now';
+}
+
+/* ---------- Flow ---------- */
+function show(id){ $$('.screen').forEach(s => s.classList.toggle('active', s.id === id)); }
+let current = null, timer = null, startedAt = 0;
+function bar(el, filled, total=30){ el.innerHTML = Array.from({length:total},(_,i)=>`<i class="${i<filled-1?'on':i===filled-1?(filled===total?'on':'lead'):''}"></i>`).join(''); }
+function generate(text, {quick=false, label='Generating your route'} = {}){
+  const p = typeof text === 'string' ? parsePrompt(text) : text;
+  const R = buildRoute(p); current = R;
+  $('#genLabel').textContent = label; $('#genQuote').textContent = `“${p.text}”`; $('#readyQuote').textContent = `“${p.text}”`;
+  $$('.rideType').forEach(e => e.textContent = p.type + ' ride');
+  const steps = [
+    ['Reading your description', `Loop · ${p.dist}km · ${p.elev > 250 ? '1 climb' : 'flat'}`],
+    [p.quiet ? 'Finding quiet roads' : 'Finding the best roads', `${R.segments} segments`],
+    ['Placing the climb', `${R.climbLen}km @ ${R.climbGrad}%`],
+    [p.cafe ? 'Adding a café stop' : 'Skipping café stops', p.cafe ? R.cafeName : '—'],
+    ['Checking surface & elevation', `${R.asphalt}% asphalt`]];
+  $('#steps').innerHTML = steps.map(([l,m]) => `<li class="step pending"><span class="ic"><i></i></span><span class="lbl">${l}</span><span class="meta">${m}</span></li>`).join('');
+  const total = quick ? 2600 : 6200; startedAt = performance.now(); show('gen'); clearInterval(timer);
+  ensureMap(); // warm up the map while the route builds
+  const els = $$('#steps .step');
+  const CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const tick = () => {
+    const t = Math.min(1, (performance.now() - startedAt) / total), pct = Math.round((1 - Math.pow(1 - t, 1.6)) * 100);
+    dotNum($('#genNum'), pct + '%'); bar($('#genBar'), Math.max(1, Math.round(pct/100*30)));
+    const active = Math.min(4, Math.floor(t * 5));
+    els.forEach((el,i) => { const done = i < active || t >= 1; el.className = 'step ' + (done ? 'done' : i === active ? 'active' : 'pending'); el.querySelector('.ic').innerHTML = done ? CHECK : '<i></i>'; });
+    $('#genStep').textContent = `Step ${active+1}/5`; $('#genEta').textContent = t >= 1 ? 'Done' : `Est. ${Math.max(1, Math.ceil((1-t)*total/1000))} sec`;
+    if (t >= 1) { clearInterval(timer); setTimeout(() => quick ? openRoute() : showReady(), 450); }
+  };
+  tick(); timer = setInterval(tick, 80);
+}
+function showReady(){
+  const R = current; dotNum($('#readyNum'), '100%'); bar($('#readyBar'), 30, 30);
+  $('#readyTime').textContent = `Built in ${((performance.now()-startedAt)/1000).toFixed(1)} sec`;
+  const hh = Math.floor(R.mins/60), mm = R.mins%60;
+  $('#readyChips').innerHTML = [`${R.p.dist}km`, `${R.p.elev}m`, mm ? `${hh}h${String(mm).padStart(2,'0')}` : `${hh}hrs`, R.p.cafe ? '1 café' : 'No stops', R.p.elev > 250 ? '1 climb' : 'Flat'].map(c => `<span class="chip">${c}</span>`).join('');
+  show('ready');
+}
+function openRoute(){ renderSheet(current); show('route'); requestAnimationFrame(() => renderMap(current)); }
+function refine(text){
+  const t = text.toLowerCase(), p = {...current.p}, n = t.match(/(\d+)\s*(km|k)/);
+  if (/short|less|reduce/.test(t) && !/climb/.test(t)) p.dist = Math.max(5, p.dist - (n ? +n[1] : Math.round(p.dist*.1)));
+  if (/long|more distance|extend/.test(t)) p.dist = Math.min(250, p.dist + (n ? +n[1] : Math.round(p.dist*.1)));
+  if (n && !/short|long|less|more|extend|reduce/.test(t)) p.dist = +n[1];
+  if (/flat|less climb|fewer hills|easier/.test(t)) p.elev = Math.round(p.elev*.6);
+  if (/hill|more climb|harder|lumpy/.test(t)) p.elev = Math.round(p.elev*1.4);
+  if (/gravel/.test(t)) p.type = 'Gravel';
+  if (/no (café|cafe|coffee|stop)/.test(t)) p.cafe = false; else if (/café|cafe|coffee/.test(t)) p.cafe = true;
+  p.seed = hash(p.text + '|' + text); p.text = `${current.p.text} — then: ${text}`;
+  generate(p, {quick:true, label:'Refining your route'});
+}
+
+/* ---------- Home ---------- */
+const EXAMPLES = [
+  {kicker:'Last ride', title:'Box Hill loop,<br>Saturday morning', meta:'Saved 08:42 · 82km · 1,120m', cta:'▶ Ride again', bg:'linear-gradient(180deg,#B13EA4 25%,#00C08D 100%)',
+   prompt:'I need a 100km loop into Surrey, with around 400-500m of elevation. Probably have like, 4 hours to spare. Avoid busy main roads please.'},
+  {kicker:'Suggested · Easy', title:'Flat coffee spin,<br>under two hours', meta:'Try it · ~45km · café stop', cta:'Try this', bg:'linear-gradient(180deg,#C56336 25%,#B52C55 100%)',
+   prompt:'Easy flat 45km coffee ride from Richmond, quiet roads, stop at a café halfway.'},
+  {kicker:'Suggested · Gravel', title:'Chilterns gravel,<br>proper lumpy', meta:'Try it · 60km · 900m', cta:'Try this', bg:'linear-gradient(180deg,#434ACB 10%,#4CD861 100%)',
+   prompt:'60km gravel loop in the Chilterns with about 900m of climbing, no café stops.'}
+];
+function cardArea(seed){ const r = rng(seed), prof = []; for (let i=0;i<24;i++){ const x=i/23; prof.push(.25 + .1*Math.sin(i*.9+r()*2) + .6*Math.exp(-((x-.25)**2)/.008) + .15*Math.exp(-((x-.65)**2)/.01)); }
+  const pts = areaChart(prof, 300, 62, 2), d = smoothPath(pts);
+  return `<svg viewBox="0 0 300 62" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="cg${seed}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset="1" stop-color="#fff" stop-opacity=".05"/></linearGradient></defs><path d="${d} L300 62 L0 62 Z" fill="url(#cg${seed})"/><path d="${d}" fill="none" stroke="#fff" stroke-width="1.2"/></svg>`; }
+$('#cards').innerHTML = EXAMPLES.map((e,i) => `<article class="card" style="background:${e.bg}"><span class="mono">${e.kicker}</span><h2>${e.title}</h2><span class="meta">${e.meta}</span><div class="area">${cardArea(i+3)}</div><button class="pill" data-ex="${i}">${e.cta}</button></article>`).join('');
+$('#pager').innerHTML = EXAMPLES.map((_,i) => `<i class="${i?'':'on'}"></i>`).join('');
+$('#cards').addEventListener('scroll', () => { const c = $('#cards'), i = Math.round(c.scrollLeft / (c.firstElementChild.offsetWidth + 12)); $$('#pager i').forEach((d,j) => d.classList.toggle('on', i === j)); }, {passive:true});
+$('#cards').addEventListener('click', e => { const b = e.target.closest('[data-ex]'); if (b) generate(EXAMPLES[+b.dataset.ex].prompt); });
+$('#today').textContent = new Date().toLocaleDateString('en-GB',{weekday:'short',day:'numeric'}) + ' · Today';
+
+const MIC = '<svg viewBox="0 0 24 24" fill="none"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 19v3" stroke="#000" stroke-width="2" stroke-linecap="round"/></svg><span class="rec"></span>';
+const SEND = '<svg viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+let vi = 0;
+function wireInput(input, btn, form, onSubmit, samples){
+  const sync = () => { const has = !!input.value.trim(); btn.innerHTML = has ? SEND : MIC; btn.setAttribute('aria-label', has ? 'Send' : 'Speak'); };
+  sync(); input.addEventListener('input', sync);
+  form.addEventListener('submit', e => { e.preventDefault(); const v = input.value.trim(); if (!v) { input.focus(); return; } input.value=''; sync(); input.blur(); onSubmit(v); });
+  btn.addEventListener('click', () => { if (input.value.trim()) { form.requestSubmit(); return; }
+    btn.classList.add('listening'); toast('Listening… (voice is simulated)'); const text = samples[vi++ % samples.length]; let i = 0;
+    const iv = setInterval(() => { input.value = text.slice(0, i += 3); if (i >= text.length) { clearInterval(iv); input.value = text; btn.classList.remove('listening'); sync(); } }, 40); });
+}
+wireInput($('#promptInput'), $('#micBtn'), $('#promptForm'), v => generate(v), ['80km loop from Guildford, hilly, about 1000m of climbing, café at halfway', 'Quick 30km recovery ride around Dorking, flat, quiet roads', '3 hours of gravel in the Surrey hills, around 600m elevation']);
+wireInput($('#refineInput'), $('#refineMic'), $('#refineForm'), v => refine(v), ['Make 10km shorter','Make it flatter','Add a café stop','Switch to gravel']);
+
+/* ---------- Buttons ---------- */
+const toHome = (prefill) => { if (prefill) { $('#promptInput').value = current.p.text; $('#promptInput').dispatchEvent(new Event('input')); } show('home'); };
+$('#cancelBtn').addEventListener('click', () => { clearInterval(timer); show('home'); });
+$('#editBtn').addEventListener('click', () => toHome(true));
+$('#penBtn').addEventListener('click', () => toHome(true));
+$('#viewBtn').addEventListener('click', openRoute);
+$('#backBtn').addEventListener('click', () => show('home'));
+$('#profileBtn').addEventListener('click', () => toast('Profiles aren’t part of this prototype'));
+$('#exportBtn').addEventListener('click', () => {
+  modal('Export route', `<div class="opts">
+      <button class="opt" data-k="gpx">GPX file <span>Copy</span></button>
+      <button class="opt" data-k="Garmin">Garmin Connect <span>Not connected</span></button>
+      <button class="opt" data-k="Wahoo">Wahoo <span>Not connected</span></button></div>`, [['Close', false]], 'Export');
+  $$('#modalBody .opt').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.k !== 'gpx') { toast(`${b.dataset.k} sync isn’t connected in this prototype`); return; }
+    modal('Your GPX file', `<p>Downloads are blocked in this preview, so here’s the GPX to copy. The coordinates follow the drawn loop.</p><textarea readonly id="gpxText">${gpx(current)}</textarea>`,
+      [['Close', false], ['Copy GPX', true, async () => { try { await navigator.clipboard.writeText($('#gpxText').value); toast('GPX copied'); } catch { $('#gpxText').select(); toast('Select all and copy'); } }]], 'Export');
+  }));
+});
+$('#aboutBtn').addEventListener('click', () => modal('About this prototype',
+  `<p>Describe a ride, or tap the mic for a sample, and you’ll get a matching loop with distance, climbing, time, surface and a café stop. Refine it with things like “Make 10km shorter”.</p><p>The map is a real MapLibre GL map in a dark theme. In this preview the roads and woods around the loop are demo geography placed at real coordinates. Hosted on its own site, the same page loads a live OpenStreetMap dark basemap automatically.</p>`,
+  [['Got it', true]], 'Concept 4'));
+function gpx(R){ const pts = R.line.filter((_,i) => i % 2 === 0); pts.push(R.line[0]);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Route planner prototype">\n  <trk><name>${R.title}</name><trkseg>\n${pts.map(([lo,la]) => `    <trkpt lat="${la.toFixed(5)}" lon="${lo.toFixed(5)}"/>`).join('\n')}\n  </trkseg></trk>\n</gpx>`.replace(/</g,'&lt;'); }
+
+/* ---------- Modal + toast ---------- */
+let tt;
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), 2200); }
+function modal(title, body, actions, kicker='Prototype'){
+  $('#modalKicker').textContent = kicker; $('#modalTitle').textContent = title; $('#modalBody').innerHTML = body; $('#modalActions').innerHTML = '';
+  actions.forEach(([label, primary, fn]) => { const b = document.createElement('button'); b.className = 'pill' + (primary ? ' solid' : ''); b.textContent = label;
+    b.addEventListener('click', () => { if (fn) fn(); else close(); }); $('#modalActions').appendChild(b); });
+  $('#modal').classList.add('open'); }
+function close(){ $('#modal').classList.remove('open'); }
+$('#modal').addEventListener('click', e => { if (e.target.id === 'modal') close(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+})();
+</script>
+</body>
+</html>
