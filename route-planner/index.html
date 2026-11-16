@@ -578,10 +578,13 @@ async function realRoute(p, stage){
   const capped = p.dist > ORS_MAX_KM, targetKm = Math.min(p.dist, ORS_MAX_KM), target = targetKm*1000;
   stage(1, `Loop · ${targetKm}km · from ${start.name === 'Your' ? 'your location' : start.name}`);
   const base = p.seed % 90, seeds = [base, (base + 37) % 90];
+  // how hilly to aim for: openrouteservice's cycling fitness level steers towards or away from climbs
+  const perKm = p.elevGiven ? p.elev / targetKm : (p.hillier ? 16 : p.flatter ? 3 : 8);
+  const level = p.flatter ? 0 : perKm < 6 ? 0 : perKm < 11 ? 1 : perKm < 16 ? 2 : 3;
   const req = seed => orsFetch(`${ORS}/v2/directions/${PROFILES[p.type]}/geojson`, {method:'POST',
     headers:{'Authorization':ORS_KEY,'Content-Type':'application/json','Accept':'application/geo+json'},
     body: JSON.stringify({coordinates:[start.c], elevation:true, extra_info:['surface','waytype'], instructions:true, radiuses:[5000],
-      options:{round_trip:{length: Math.round(target*.86), points: targetKm < 35 ? 4 : 5, seed}}})});
+      options:{round_trip:{length: Math.round(target*.86), points: targetKm < 35 ? 4 : 5, seed}, profile_params:{weightings:{steepness_difficulty: level}}}})});
   const settled = await Promise.allSettled(seeds.map(req));
   const feats = settled.filter(r => r.status === 'fulfilled').map(r => r.value.features[0]);
   if (!feats.length) throw settled[0].reason;
@@ -596,9 +599,11 @@ async function realRoute(p, stage){
   stage(2, `${Math.round(mainShare(f)*100)}% main roads`);
   // biggest climb: largest height gain within a ~12km window, sampled every ~100m
   const smp = []; for (let i = 0, next = 0; i < line.length; i++) if (cum[i] >= next) { smp.push(i); next = cum[i] + 100; }
-  let bi = 0, bj = 0, bg = 0;
+  let bi = 0, bj = 0, bg = 0, bs = 0;
   for (let a = 0; a < smp.length; a++) for (let b = a + 1; b < smp.length && cum[smp[b]] - cum[smp[a]] < 12000; b++) {
-    const g = ele[smp[b]] - ele[smp[a]]; if (g > bg) { bg = g; bi = smp[a]; bj = smp[b]; } }
+    // score like a climb category: height gain × gradient, so short steep climbs beat long drags
+    const g = ele[smp[b]] - ele[smp[a]], len = cum[smp[b]] - cum[smp[a]];
+    if (g > 15 && len >= 400) { const sc = g*g/len; if (sc > bs) { bs = sc; bg = g; bi = smp[a]; bj = smp[b]; } } }
   const climbLen = +(((cum[bj] - cum[bi]) || 100)/1000).toFixed(1), climbGrad = Math.max(1, Math.round(bg / ((cum[bj] - cum[bi]) || 1) * 100));
   stage(3, `${climbLen}km @ ${climbGrad}%`);
   // elevation profile: 64 samples by distance
