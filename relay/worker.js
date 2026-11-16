@@ -200,13 +200,15 @@ export default {
         if (!res) {
           const q = overpassQuery(lon, lat, radius);
           for (const host of OVERPASS) {
+            const t0 = Date.now();
             try {
-              const up = await fetch(`${host}?data=${encodeURIComponent(q)}`, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(50000) });   // Overpass can be slow when busy
-              if (!up.ok || !(up.headers.get('content-type') || '').includes('json')) continue;
+              // Overpass can take 40s+ when busy; only move on to the next server if this one says no quickly
+              const up = await fetch(`${host}?data=${encodeURIComponent(q)}`, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(90000) });
+              if (!up.ok || !(up.headers.get('content-type') || '').includes('json')) { if (Date.now() - t0 > 20000) break; continue; }
               res = new Response(up.body, { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=604800' } });
               ctx.waitUntil(cache.put(cacheKey, res.clone()));
               break;
-            } catch (e) { /* busy or slow: try the next server */ }
+            } catch (e) { if (Date.now() - t0 > 20000) break; /* refused quickly: try the next server */ }
           }
           if (!res) return json({ error: 'Cycle route data is busy, try again shortly' }, 503, cors);
         }

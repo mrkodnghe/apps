@@ -871,8 +871,12 @@ function signedRoutesNear(c, km){
     let data;
     const direct = async () => { const u = `${OVERPASS}?data=${encodeURIComponent(overpassQuery(g[0], g[1], r))}`;
       for (let i = 0; ; i++) { try { return await get(u, 50000); } catch (e) { if (i === 2 || ![429, 502, 504].includes(e.status)) throw e; await new Promise(ok => setTimeout(ok, 6000*(i + 1))); } } };   // busy: wait for a free slot
-    try { if (!RELAY) throw Object.assign(new Error('no relay'), {status: 404}); data = await get(`${RELAY}/cycleroutes?near=${g[0]},${g[1]}&radius=${r}`, 60000); }
-    catch (e) { if (e.status !== 404) throw e; data = await direct(); }   // relay without /cycleroutes yet
+    // the relay answers instantly when the area is cached; if it doesn't, also ask Overpass directly and take whichever comes first
+    let settled = false;
+    const relay = RELAY ? get(`${RELAY}/cycleroutes?near=${g[0]},${g[1]}&radius=${r}`, 90000) : Promise.reject(new Error('no relay'));
+    relay.then(() => { settled = true; }, () => {});
+    const own = new Promise(ok => setTimeout(ok, RELAY ? 3000 : 0)).then(() => settled ? Promise.reject(new Error('relay answered')) : direct());
+    data = await Promise.any([relay, own]);
     return condenseRoutes(data);
   })().catch(() => { signedMemo.delete(key); return null; }));
   return signedMemo.get(key);
