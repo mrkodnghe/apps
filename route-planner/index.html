@@ -185,6 +185,29 @@ button{background:none;border:0;cursor:pointer}
 .modal .opts{display:grid;gap:8px;margin:6px 0 14px}
 .modal .opt{display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-radius:20px;background:rgba(255,255,255,.06);border:1px solid var(--line);font-size:16px;font-weight:500;text-align:left}
 .modal .opt span{font-family:var(--mono);font-size:11px;color:var(--faint);text-transform:uppercase}
+.modal .opt.sel{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.6)}
+.modal .opt.sel span{color:var(--fg)}
+.modal .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0 14px}
+.modal .grid2 .opt{justify-content:center}
+.modal .field{display:flex;gap:8px;margin:0 0 14px}
+.modal .field input{flex:1;min-width:0;height:52px;border-radius:26px;background:rgba(255,255,255,.06);border:1px solid var(--line);padding:0 18px;font-size:16px;outline:0;color:var(--fg)}
+.modal .field .pill{padding:0 20px}
+.modal .readout{display:flex;align-items:baseline;justify-content:center;gap:8px;margin:8px 0 18px}
+.modal .readout svg{height:52px;width:auto}
+.modal input[type=range]{width:100%;margin:0 0 18px;accent-color:#F2F2F2;height:28px}
+.modal .presets{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px}
+.modal .presets button{font-family:var(--mono);font-size:12px;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid var(--line);color:rgba(242,242,242,.85)}
+/* "what I understood" chips */
+.understood{margin-top:24px}
+.understood .mono{display:block;margin-bottom:10px;font-size:11px}
+.uchips{display:flex;flex-wrap:wrap;gap:6px}
+.uchip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.03em;padding:8px 11px;border-radius:999px;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.18);color:rgba(242,242,242,.9);transition:background .2s,transform .15s}
+.uchip:active{transform:scale(.96);background:rgba(255,255,255,.16)}
+.uchip svg{width:10px;height:10px;opacity:.6}
+.uchip.off{color:rgba(242,242,242,.5);border-style:dashed}
+#gen .understood,#ready .understood{margin:-8px 0 32px}
+#route .understood{margin:26px 0 0}
 .modal .actions{display:flex;gap:8px}
 .modal .actions .pill{flex:1}
 .modal .actions .solid{background:var(--fg);color:#000;border-color:var(--fg)}
@@ -221,6 +244,7 @@ button{background:none;border:0;cursor:pointer}
     <div class="dotbar" id="genBar"></div>
     <div class="axis"><span class="mono" id="genEta">Est. 6 sec</span><span class="mono" id="genStep">Step 1/5</span></div>
     <p class="quote" id="genQuote"></p>
+    <div class="understood" id="genU"></div>
     <div class="panel steps-panel"><ol class="steps" id="steps"></ol></div>
   </section>
 
@@ -232,6 +256,7 @@ button{background:none;border:0;cursor:pointer}
     <div class="dotbar" id="readyBar"></div>
     <div class="axis"><span class="mono" id="readyTime">Built in 6.2 sec</span><span class="mono">Step 5/5</span></div>
     <p class="quote" id="readyQuote"></p>
+    <div class="understood" id="readyU"></div>
     <div class="panel ready-panel">
       <div class="step done"><span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="lbl">Route is ready to use</span><span class="meta" id="readyKind">Loop</span></div>
       <div class="chips" id="readyChips"></div>
@@ -256,6 +281,7 @@ button{background:none;border:0;cursor:pointer}
         <div class="axis"><span class="mono">0 km</span><span class="mono" id="climbLbl"></span><span class="mono" id="distLbl"></span></div>
         <div class="dotbar" id="surface"></div>
         <div class="legend mono" id="legend"></div>
+        <div class="understood" id="routeU"></div>
         <form class="input glass" id="refineForm" autocomplete="off">
           <span class="pre">Refine:</span>
           <input id="refineInput" type="text" placeholder="“Make 10km shorter”" enterkeyhint="go" aria-label="Refine the route">
@@ -578,9 +604,13 @@ async function resolveStart(p){
   if (p.start) return p.start;                                  // refinements keep the same start
   const t = p.text.toLowerCase(), keys = Object.keys(AREAS).sort((a,b)=>b.length-a.length);
   // a place the ride should head towards ("into Surrey") steers which loop is picked
-  const towardsKey = keys.find(k => new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
+  const towardsKey = p.noTowards ? null : keys.find(k => new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
   if (towardsKey) p.towards = AREAS[towardsKey].c;
-  else { const tp = placeFromText(p.text, TOWARDS_WORDS); if (tp) { const g = await geocode(tp); if (g) p.towards = g.c; } }
+  else if (!p.noTowards) { const tp = placeFromText(p.text, TOWARDS_WORDS); if (tp) { const g = await geocode(tp); if (g) p.towards = g.c; } }
+  // a start chosen from the chips
+  if (p.startPlace) { const k = keys.find(k => k === p.startPlace.toLowerCase()); if (k) return {c: AREAS[k].c, name: AREAS[k].name};
+    const g = await geocode(p.startPlace); if (g) return g; toast(`Couldn’t find ${p.startPlace}, so using your location`); }
+  if (p.startGPS || p.startPlace) { try { const c = await getLocation(); return {c, name:'Your', gps:true}; } catch (e) { toast('Couldn’t get your location, so starting from Dorking'); return {c: AREAS.surrey.c, name: 'Dorking'}; } }
   // an explicit start place ("from Guildford", "in the Chilterns") wins over GPS
   const startKey = keys.find(k => k !== towardsKey && new RegExp(`\\b(?:${START_WORDS}\\s+(?:the\\s+)?)?${k}\\b`).test(t) && !new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
   if (startKey) return {c: AREAS[startKey].c, name: AREAS[startKey].name};
@@ -670,6 +700,7 @@ async function generate(text, {quick=false, label='Generating your route'} = {})
   const p = typeof text === 'string' ? parsePrompt(text) : text, id = ++runId;
   $('#genLabel').textContent = label; $('#genQuote').textContent = `“${p.text}”`; $('#readyQuote').textContent = `“${p.text}”`;
   $$('.rideType').forEach(e => e.textContent = p.type + ' ride');
+  renderUnderstood(p, ['#genU']);
   const labels = ['Reading your description', p.quiet ? 'Finding quiet roads' : 'Finding the best roads', 'Placing the climb', p.cafe ? 'Adding a café stop' : 'Skipping café stops', 'Checking surface & elevation'];
   $('#steps').innerHTML = labels.map(l => `<li class="step pending"><span class="ic"><i></i></span><span class="lbl">${l}</span><span class="meta"></span></li>`).join('');
   const els = $$('#steps .step');
@@ -701,8 +732,88 @@ async function generate(text, {quick=false, label='Generating your route'} = {})
     [`Loop · ${p.dist}km`, `${R.segments} segments`, `${R.climbLen}km @ ${R.climbGrad}%`, p.cafe ? R.cafeName : '—', `${R.asphalt}% asphalt`].forEach((m, i) => stage(i + 1, m));
   }
   if (id !== runId) return;
-  current = R; doneSteps = 5; finished = true;
+  R.req = {...p, start: R.p && R.p.start}; current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
   if (R.capped) toast(`Free routing caps loops at ${ORS_MAX_KM}km`);
+}
+/* ---------- "What I understood": tappable chips that edit the request ---------- */
+function detectStartLabel(p){
+  if (p.start) return p.start.gps ? 'your location' : p.start.name;
+  if (p.startGPS) return 'your location'; if (p.startPlace) return p.startPlace;
+  const t = p.text.toLowerCase(), keys = Object.keys(AREAS).sort((a,b)=>b.length-a.length);
+  const k = keys.find(k => new RegExp(`\\b(?:${START_WORDS}\\s+(?:the\\s+)?)?${k}\\b`).test(t) && !new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
+  return k ? AREAS[k].name : (placeFromText(p.text, START_WORDS) || 'your location');
+}
+function detectTowardsLabel(p){
+  if (p.noTowards) return null; const t = p.text.toLowerCase(), keys = Object.keys(AREAS).sort((a,b)=>b.length-a.length);
+  const k = keys.find(k => new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
+  return k ? AREAS[k].name : placeFromText(p.text, TOWARDS_WORDS);
+}
+const PEN = '<svg viewBox="0 0 24 24" fill="none"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" stroke="#F2F2F2" stroke-width="2.4" stroke-linejoin="round"/></svg>';
+function chipsFor(p){
+  const tw = detectTowardsLabel(p);
+  return [
+    ['dist', `${Math.min(p.dist, ORS_MAX_KM)} km`],
+    ['climb', p.flatter ? 'Flatter' : p.hillier ? 'Hillier' : p.elevGiven ? `~${p.elev} m climbing` : 'Any climbing'],
+    ['start', `From ${detectStartLabel(p)}`],
+    ...(tw ? [['towards', `Towards ${tw}`]] : []),
+    ['type', `${p.type} ride`],
+    ['roads', p.quiet ? 'Quiet roads' : 'Any roads', !p.quiet],
+    ['cafe', p.cafe ? 'Café stop' : 'No café', !p.cafe]
+  ];
+}
+let editingReq = null;
+function renderUnderstood(p, targets){
+  const html = `<span class="mono">What I understood · tap to change</span><div class="uchips">${chipsFor(p).map(([k, label, off]) =>
+    `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>`;
+  targets.forEach(sel => { const el = $(sel); el.innerHTML = html; el._req = p; });
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (!b) return;
+  const box = b.closest('.understood'); editingReq = box && box._req; if (editingReq) openEditor(b.dataset.edit); });
+function applyEdit(changes){
+  const base = {...editingReq, ...changes}; delete base.towards;
+  if ('startPlace' in changes || 'startGPS' in changes) delete base.start;
+  base.seed = hash(JSON.stringify([base.text, base.dist, base.elev, base.type, base.quiet, base.cafe, base.startPlace, base.startGPS, base.flatter, base.hillier, base.noTowards, Date.now() % 97]));
+  close(); generate(base, {quick: true, label: 'Updating your route'});
+}
+function optRows(list, cur, cls = 'opts'){ return `<div class="${cls}">${list.map(([v, label, sub]) => `<button class="opt${v === cur ? ' sel' : ''}" data-v="${v}">${label}${sub ? `<span>${sub}</span>` : ''}</button>`).join('')}</div>`; }
+function bindOpts(fn){ $$('#modalBody .opt').forEach(b => b.addEventListener('click', () => fn(b.dataset.v))); }
+function openEditor(k){
+  const p = editingReq;
+  if (k === 'dist') {
+    let v = Math.min(p.dist, ORS_MAX_KM);
+    modal('Distance', `<div class="readout"><svg id="distNum"></svg><span class="mono">km</span></div>
+      <input type="range" id="distRange" min="5" max="${ORS_MAX_KM}" step="1" value="${v}" aria-label="Distance in kilometres">
+      <div class="presets">${[20, 40, 60, 80, 100].map(n => `<button data-km="${n}">${n} km</button>`).join('')}</div>`,
+      [['Cancel', false], ['Update route', true, () => applyEdit({dist: v})]], 'Edit');
+    const upd = n => { v = +n; $('#distRange').value = v; dotNum($('#distNum'), String(v), .1); };
+    upd(v); $('#distRange').addEventListener('input', e => upd(e.target.value));
+    $$('#modalBody [data-km]').forEach(b => b.addEventListener('click', () => upd(b.dataset.km)));
+  } else if (k === 'climb') {
+    const d = Math.min(p.dist, ORS_MAX_KM), cur = p.flatter ? 'flat' : p.hillier ? 'hilly' : p.elevGiven ? 'rolling' : 'any';
+    modal('Climbing', optRows([['flat','Flatter',`~${d*4} m`],['rolling','Rolling',`~${d*8} m`],['hilly','Hillier',`~${d*15} m`],['any','Any climbing','Best route']], cur), [['Cancel', false]], 'Edit');
+    bindOpts(v => applyEdit(v === 'flat' ? {elevGiven:true, elev:d*4, flatter:true, hillier:false} : v === 'rolling' ? {elevGiven:true, elev:d*8, flatter:false, hillier:false}
+      : v === 'hilly' ? {elevGiven:true, elev:d*15, flatter:false, hillier:true} : {elevGiven:false, flatter:false, hillier:false}));
+  } else if (k === 'start') {
+    const cur = detectStartLabel(p);
+    modal('Start & finish', optRows([['__gps','Your location','GPS'], ...['Dorking','Guildford','Richmond','Box Hill','Chilterns'].map(n => [n, n, ''])], cur === 'your location' ? '__gps' : cur) +
+      `<div class="field"><input id="placeIn" placeholder="Another place…" enterkeyhint="go"><button class="pill solid" id="placeGo" style="background:var(--fg);color:#000">Go</button></div>`, [['Cancel', false]], 'Edit');
+    bindOpts(v => applyEdit(v === '__gps' ? {startGPS:true, startPlace:null} : {startPlace:v, startGPS:false}));
+    const go = () => { const v = $('#placeIn').value.trim(); if (v) applyEdit({startPlace:v, startGPS:false}); };
+    $('#placeGo').addEventListener('click', go); $('#placeIn').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  } else if (k === 'towards') {
+    modal('Heading towards', `<p>The loop leans towards ${detectTowardsLabel(p)}. Loops can’t be aimed exactly, so this picks the option that gets closest.</p>` +
+      optRows([['keep',`Keep ${detectTowardsLabel(p)}`,''],['none','No destination','Any direction']], 'keep'), [['Cancel', false]], 'Edit');
+    bindOpts(v => v === 'none' ? applyEdit({noTowards:true}) : close());
+  } else if (k === 'type') {
+    modal('Ride type', optRows([['Road','Road ride','Tarmac'],['Gravel','Gravel ride','Lanes & tracks'],['MTB','MTB ride','Trails']], p.type), [['Cancel', false]], 'Edit');
+    bindOpts(v => applyEdit({type:v}));
+  } else if (k === 'roads') {
+    modal('Roads', optRows([['quiet','Quiet roads','Fewer main roads'],['any','Any roads','Most direct']], p.quiet ? 'quiet' : 'any'), [['Cancel', false]], 'Edit');
+    bindOpts(v => applyEdit({quiet: v === 'quiet'}));
+  } else if (k === 'cafe') {
+    modal('Café stop', optRows([['yes','Add a café stop','Around halfway'],['no','No café','Keep rolling']], p.cafe ? 'yes' : 'no'), [['Cancel', false]], 'Edit');
+    bindOpts(v => applyEdit({cafe: v === 'yes'}));
+  }
 }
 function showReady(){
   const R = current; dotNum($('#readyNum'), '100%'); bar($('#readyBar'), 30, 30);
