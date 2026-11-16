@@ -30,7 +30,8 @@ const BRIEF_TOOL = {
         },
         required: ['type'],
       },
-      towards: { type: ['string', 'null'], description: 'A place or area the loop should head towards or pass through ("into Surrey", "out to Box Hill"), else null.' },
+      via: { type: 'array', items: { type: 'string' }, description: 'Specific places the route MUST pass through, in riding order (max 3): parks, villages, hills, landmarks, cafés by name. E.g. "through Richmond Park then Kew" → ["Richmond Park", "Kew"]. Empty if none.' },
+      towards: { type: ['string', 'null'], description: 'Only a loose direction or wider area to head into ("into Surrey", "out towards the coast"), not a must-pass place. Null if none or if it is already in via.' },
       distance_km: { type: 'number', description: 'Target loop distance in km. If only a time budget is given, convert it using the pace and stop rules. Clamp to 5–100.' },
       duration_min: { type: ['number', 'null'], description: 'Total time budget in minutes if the rider gave one (including "back by 12" relative to now), else null.' },
       climbing: {
@@ -46,7 +47,7 @@ const BRIEF_TOOL = {
       title: { type: 'string', description: 'A short route name, 2–4 words, Title case, e.g. "Surrey Hills Loop", "Flat Coffee Spin".' },
       assumptions: { type: 'array', items: { type: 'string' }, description: 'Up to 3 guesses you made that the rider might want to change, each 2–6 words, e.g. "Back by 12:00", "Road pace ~25 km/h". Skip obvious ones like looping back to start.' },
     },
-    required: ['activity', 'start', 'towards', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'title', 'assumptions'],
+    required: ['activity', 'start', 'via', 'towards', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'title', 'assumptions'],
   },
 };
 const BRIEF_SYSTEM = `You turn a cyclist's free-text request into a precise brief for a UK route planner that builds loops (start and finish in the same place) on real roads.
@@ -56,7 +57,9 @@ Rules:
 - Pace for converting time to distance: road 25 km/h, gravel 18 km/h, mtb 12 km/h. Subtract 20 minutes for a café stop. Hilly routes are ~15% slower.
 - If neither distance nor time is given, pick a sensible distance from the wording ("quick spin" ~25 km, "long ride" ~80 km, otherwise ~45 km) and say so in assumptions.
 - climbing: "flat"/"easy"/"recovery" → flat; "lumpy"/"hilly"/"climbing" → hilly; a stated figure goes in target_m (use the middle of a range).
-- If a refinement is given with a previous brief, return the full updated brief: change only what the refinement asks for, keep everything else.
+- Places the rider wants to go through, via, past, over, round, or to visit go in via (in order). Use towards only for a vague direction or big region. A named start place is never also a via place.
+- A climb or hill named as something to ride ("up Box Hill", "do Leith Hill") goes in via.
+- If a refinement is given with a previous brief, return the full updated brief: change only what the refinement asks for, keep everything else (including via, unless asked to change it).
 - Keep place names as the rider wrote them, cleaned up (capitalised, no "the" unless part of the name).`;
 
 async function understand(env, body) {
@@ -115,7 +118,7 @@ export default {
         const profile = url.pathname.split('/')[2];
         if (!PROFILES.has(profile)) return json({ error: 'Unknown profile' }, 400, cors);
         const body = await request.json();
-        if (!Array.isArray(body.coordinates) || body.coordinates.length < 1 || body.coordinates.length > 5) return json({ error: 'Bad coordinates' }, 400, cors);
+        if (!Array.isArray(body.coordinates) || body.coordinates.length < 1 || body.coordinates.length > 8) return json({ error: 'Bad coordinates' }, 400, cors);
         const rt = body.options && body.options.round_trip;
         if (rt && Number(rt.length) > MAX_ROUND_TRIP_M) return json({ error: 'Round trip too long' }, 400, cors);
         const res = await fetch(`${ORS}/v2/directions/${profile}/geojson`, {
