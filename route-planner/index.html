@@ -76,8 +76,23 @@ button{background:none;border:0;cursor:pointer}
   padding:calc(var(--safe-t) + 20px) 32px calc(var(--safe-b) + 140px)}
 .home-scroll::-webkit-scrollbar{display:none}
 .home-scroll > *{flex-shrink:0}
-.home-fade{position:absolute;left:0;right:0;bottom:0;height:calc(var(--safe-b) + 140px);background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.85) 55%,#000);pointer-events:none;z-index:4}
-#home .input{position:absolute;left:32px;right:32px;bottom:calc(var(--safe-b) + 32px);z-index:5;background:rgba(22,22,22,.82);box-shadow:0 12px 40px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.04)}
+.home-fade{position:absolute;left:0;right:0;bottom:0;height:calc(var(--safe-b) + 140px);background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.55) 60%,rgba(0,0,0,.8));pointer-events:none;z-index:4}
+#home .input{position:absolute;left:32px;right:32px;bottom:calc(var(--safe-b) + 32px);z-index:5}
+
+
+/* iOS-style Liquid Glass bar */
+.glass{position:relative;isolation:isolate;
+  background:linear-gradient(180deg,rgba(255,255,255,.14) 0%,rgba(255,255,255,.05) 55%,rgba(255,255,255,.08) 100%);
+  border:0;
+  -webkit-backdrop-filter:blur(22px) saturate(190%) brightness(1.08);backdrop-filter:blur(22px) saturate(190%) brightness(1.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.38),inset 0 -1px 0 rgba(255,255,255,.10),inset 0 0 24px rgba(255,255,255,.05),0 12px 32px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.25)}
+.glass::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;z-index:-1;
+  background:linear-gradient(140deg,rgba(255,255,255,.6) 0%,rgba(255,255,255,.12) 28%,rgba(255,255,255,.04) 55%,rgba(255,255,255,.18) 80%,rgba(255,255,255,.45) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}
+.glass::after{content:"";position:absolute;left:18%;right:18%;top:0;height:46%;border-radius:0 0 50% 50%/0 0 100% 100%;pointer-events:none;z-index:-1;
+  background:radial-gradient(ellipse at 50% 0%,rgba(255,255,255,.16),rgba(255,255,255,0) 70%)}
+.glass input::placeholder{color:rgba(242,242,242,.62)}
+.glass .mic{box-shadow:0 2px 10px rgba(0,0,0,.3),inset 0 -1px 0 rgba(0,0,0,.08)}
 
 /* ---------- Generating / Ready ---------- */
 #gen,#ready{overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none}
@@ -192,7 +207,7 @@ button{background:none;border:0;cursor:pointer}
     <div class="pager" id="pager"></div>
     </div>
     <div class="home-fade" aria-hidden="true"></div>
-    <form class="input" id="promptForm" autocomplete="off">
+    <form class="input glass" id="promptForm" autocomplete="off">
       <input id="promptInput" type="text" placeholder="Describe your route…" enterkeyhint="go" aria-label="Describe your route">
       <button class="mic" id="micBtn" type="button" aria-label="Speak your route"></button>
     </form>
@@ -241,7 +256,7 @@ button{background:none;border:0;cursor:pointer}
         <div class="axis"><span class="mono">0 km</span><span class="mono" id="climbLbl"></span><span class="mono" id="distLbl"></span></div>
         <div class="dotbar" id="surface"></div>
         <div class="legend mono" id="legend"></div>
-        <form class="input" id="refineForm" autocomplete="off">
+        <form class="input glass" id="refineForm" autocomplete="off">
           <span class="pre">Refine:</span>
           <input id="refineInput" type="text" placeholder="“Make 10km shorter”" enterkeyhint="go" aria-label="Refine the route">
           <button class="mic" id="refineMic" type="button" aria-label="Speak a refinement"></button>
