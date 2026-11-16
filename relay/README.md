@@ -11,7 +11,8 @@ It only accepts requests from the sites listed in `ALLOWED_ORIGINS`, only allows
 3. Go to the Worker's **Settings → Variables and Secrets** and add:
    - `ORS_KEY`, type **Secret**, value: your openrouteservice API key
    - `ALLOWED_ORIGINS`, type **Text**, value: `https://mrkodnghe.github.io` (optional; this is the default)
-4. Open `https://route-relay.<your-subdomain>.workers.dev/health`. It should show `{"ok":true,"configured":true}`.
+   - `ANTHROPIC_KEY`, type **Secret**, value: your Anthropic API key (optional; turns on the AI step)
+4. Open `https://route-relay.<your-subdomain>.workers.dev/health`. It should show `{"ok":true,"configured":true,"ai":true}`.
 5. Put that address (without `/health`) in `RELAY` in `route-planner/index.html`.
 
 ## Endpoints
@@ -21,4 +22,5 @@ It only accepts requests from the sites listed in `ALLOWED_ORIGINS`, only allows
 | POST | `/directions/{profile}` | Route, body is an openrouteservice directions request |
 | GET | `/geocode?text=…` | Find a place in Great Britain |
 | POST | `/pois` | Cafés within 2 km of a point |
+| POST | `/understand` | AI step: free-text request (or refinement) → structured ride brief |
 | GET | `/health` | Check the relay is set up |

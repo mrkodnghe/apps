@@ -237,6 +237,7 @@ button{background:none;border:0;cursor:pointer}
 .uchip.off{color:rgba(242,242,242,.5);border-style:dashed}
 #ready .understood{margin:-8px 0 32px}
 #route .understood{margin:26px 0 0}
+.assume{margin-top:10px;font-size:12px;line-height:1.4;color:rgba(242,242,242,.45)}
 .modal .actions{display:flex;gap:8px}
 .modal .actions .pill{flex:1}
 .modal .actions .solid{background:var(--fg);color:#000;border-color:var(--fg)}
@@ -605,6 +606,45 @@ const orsReq = {
 };
 const PROFILES = {Road:'cycling-road', Gravel:'cycling-regular', MTB:'cycling-mountain'};
 const ORS_MAX_KM = 100;                      // free round-trip limit
+/* ---------- AI step: the relay asks Claude to turn the prompt into a structured brief ---------- */
+async function aiUnderstand(text, previous){
+  if (!RELAY) return null;
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 9000);
+  try {
+    const now = new Date().toLocaleString('en-GB', {weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    const res = await fetch(`${RELAY}/understand`, {method:'POST', headers:{'Content-Type':'application/json'}, signal: ctl.signal,
+      body: JSON.stringify({text, context:{now}, ...(previous ? {previous} : {})})});
+    if (!res.ok) return null;
+    const j = await res.json(); return j && j.brief && typeof j.brief === 'object' ? j.brief : null;
+  } catch (e) { return null; } finally { clearTimeout(to); }
+}
+function briefFromP(p){
+  return { activity: (p.type || 'Road').toLowerCase(), start: p.start && !p.start.gps ? {type:'place', place:p.start.name} : p.startPlace ? {type:'place', place:p.startPlace} : {type:'gps'},
+    towards: p.towardsPlace || null, distance_km: p.dist, duration_min: null,
+    climbing: {target_m: p.elevGiven ? p.elev : null, preference: p.flatter ? 'flat' : p.hillier ? 'hilly' : p.elevGiven ? 'rolling' : 'any'},
+    quiet_roads: !!p.quiet, cafe_stop: !!p.cafe, title: p.customTitle || p.aiTitle || '', assumptions: p.assumptions || [] };
+}
+function applyBrief(base, b){
+  const q = {...base}; delete q.towards;
+  q.brief = b; q.ai = true;
+  q.type = {road:'Road', gravel:'Gravel', mtb:'MTB'}[b.activity] || q.type;
+  if (Number(b.distance_km) > 0) q.dist = Math.max(5, Math.round(Number(b.distance_km)));
+  const c = b.climbing || {}, pref = c.preference || 'any', tgt = Number(c.target_m) > 0 ? Math.round(Number(c.target_m)) : null;
+  q.flatter = pref === 'flat'; q.hillier = pref === 'hilly';
+  if (tgt) { q.elevGiven = true; q.elev = tgt; }
+  else if (pref === 'flat') { q.elevGiven = true; q.elev = Math.round(q.dist*4); }
+  else if (pref === 'hilly') { q.elevGiven = true; q.elev = Math.round(q.dist*15); }
+  else if (pref === 'rolling') { q.elevGiven = true; q.elev = Math.round(q.dist*8); }
+  else { q.elevGiven = false; q.elev = Math.round(q.dist*6); }
+  q.quiet = !!b.quiet_roads; q.cafe = !!b.cafe_stop;
+  const st = b.start || {type:'gps'};
+  if (st.type === 'place' && st.place) {
+    if (!(base.start && !base.start.gps && base.start.name.toLowerCase() === st.place.toLowerCase())) { delete q.start; q.startPlace = st.place; q.startGPS = false; }
+  } else if (!(base.start && base.start.gps)) { delete q.start; q.startGPS = true; q.startPlace = null; }
+  if (b.towards) { q.towardsPlace = b.towards; q.noTowards = false; } else { q.towardsPlace = null; q.noTowards = true; }
+  q.aiTitle = (b.title || '').slice(0, 40); q.assumptions = Array.isArray(b.assumptions) ? b.assumptions.slice(0, 4).map(String) : [];
+  return q;
+}
 class RouteError extends Error { constructor(msg, kind){ super(msg); this.kind = kind; } }
 async function orsFetch(url, opts = {}, ms = 25000){
   const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), ms);
@@ -643,12 +683,14 @@ async function geocode(place){
   } catch (e) { if (e.kind === 'quota') throw e; return null; }
 }
 async function resolveStart(p){
-  if (p.start) return p.start;                                  // refinements keep the same start
   const t = p.text.toLowerCase(), keys = Object.keys(AREAS).sort((a,b)=>b.length-a.length);
+  if (p.towardsPlace) { const k = keys.find(k => k === p.towardsPlace.toLowerCase()); if (k) p.towards = AREAS[k].c; else { const g = await geocode(p.towardsPlace); if (g) p.towards = g.c; } }
+  if (p.start) return p.start;                                  // refinements keep the same start
+  if (p.ai && !p.startPlace) { try { const c = await getLocation(); return {c, name:'Your', gps:true}; } catch (e) { toast('Couldn’t get your location, so starting from Dorking'); return {c: AREAS.surrey.c, name: 'Dorking'}; } }
   // a place the ride should head towards ("into Surrey") steers which loop is picked
-  const towardsKey = p.noTowards ? null : keys.find(k => new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
+  const towardsKey = (p.noTowards || p.towardsPlace) ? null : keys.find(k => new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
   if (towardsKey) p.towards = AREAS[towardsKey].c;
-  else if (!p.noTowards) { const tp = placeFromText(p.text, TOWARDS_WORDS); if (tp) { const g = await geocode(tp); if (g) p.towards = g.c; } }
+  else if (!p.noTowards && !p.towardsPlace) { const tp = placeFromText(p.text, TOWARDS_WORDS); if (tp) { const g = await geocode(tp); if (g) p.towards = g.c; } }
   // a start chosen from the chips
   if (p.startPlace) { const k = keys.find(k => k === p.startPlace.toLowerCase()); if (k) return {c: AREAS[k].c, name: AREAS[k].name};
     const g = await geocode(p.startPlace); if (g) return g; toast(`Couldn’t find ${p.startPlace}, so using your location`); }
@@ -736,7 +778,7 @@ function show(id){ $$('.screen').forEach(s => { const on = s.id === id; if (on &
 let current = null, timer = null, startedAt = 0, runId = 0;
 function bar(el, filled, total=30){ el.innerHTML = Array.from({length:total},(_,i)=>`<i class="${i<filled-1?'on':i===filled-1?(filled===total?'on':'lead'):''}"></i>`).join(''); }
 async function generate(text, {quick=false, label='Generating your route', inPlace=false} = {}){
-  const p = typeof text === 'string' ? parsePrompt(text) : text, id = ++runId;
+  let p = typeof text === 'string' ? parsePrompt(text) : text, id = ++runId;
   $('#genLabel').textContent = label; $('#readyQuote').textContent = `“${p.text}”`;
   $$('.rideType').forEach(e => e.textContent = p.type + ' ride');
   const labels = ['Reading your description', p.quiet ? 'Finding quiet roads' : 'Finding the best roads', 'Placing the climb', p.cafe ? 'Adding a café stop' : 'Skipping café stops', 'Checking surface & elevation'];
@@ -766,6 +808,15 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   };
   if (!inPlace) { tick(); timer = setInterval(tick, 80); }
   let R;
+  if (RELAY && (typeof text === 'string' || p._refine)) {
+    const b = p._refine ? await aiUnderstand(p._refine.text, briefFromP(p._refine.base)) : await aiUnderstand(p.text);
+    if (id !== runId) return;
+    if (b) { p = applyBrief(p._refine ? {...p._refine.base, text: p.text, seed: p.seed} : p, b);
+      $$('.rideType').forEach(e => e.textContent = p.type + ' ride');
+      els[1].querySelector('.lbl').textContent = p.quiet ? 'Finding quiet roads' : 'Finding the best roads';
+      els[3].querySelector('.lbl').textContent = p.cafe ? 'Adding a café stop' : 'Skipping café stops'; }
+    delete p._refine;
+  }
   try { R = await realRoute(p, stage); }
   catch (e) {
     if (id !== runId) return;
@@ -775,7 +826,7 @@ async function generate(text, {quick=false, label='Generating your route', inPla
     [`Loop · ${p.dist}km`, `${R.segments} segments`, `${R.climbLen}km @ ${R.climbGrad}%`, p.cafe ? R.cafeName : '—', `${R.asphalt}% asphalt`].forEach((m, i) => stage(i + 1, m));
   }
   if (id !== runId) return;
-  if (p.customTitle) R.title = p.customTitle;
+  if (p.customTitle) R.title = p.customTitle; else if (p.aiTitle) R.title = p.aiTitle;
   R.req = {...p, start: R.p && R.p.start}; current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
   if (inPlace) { setUpdating(false); updateRouteInPlace(R); }
   if (R.capped) toast(`Free routing caps loops at ${ORS_MAX_KM}km`);
@@ -789,6 +840,7 @@ function detectStartLabel(p){
   return k ? AREAS[k].name : (placeFromText(p.text, START_WORDS) || 'your location');
 }
 function detectTowardsLabel(p){
+  if (p.towardsPlace) return p.towardsPlace;
   if (p.noTowards) return null; const t = p.text.toLowerCase(), keys = Object.keys(AREAS).sort((a,b)=>b.length-a.length);
   const k = keys.find(k => new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
   return k ? AREAS[k].name : placeFromText(p.text, TOWARDS_WORDS);
@@ -809,7 +861,7 @@ function chipsFor(p){
 let editingReq = null;
 function renderUnderstood(p, targets){
   const html = `<span class="mono">What I understood · tap to change</span><div class="uchips">${chipsFor(p).map(([k, label, off]) =>
-    `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>`;
+    `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.assumptions && p.assumptions.length ? `<p class="assume">Assumed: ${p.assumptions.map(a => esc(a)).join(' · ')}</p>` : ''}`;
   targets.forEach(sel => { const el = $(sel); el.innerHTML = html; el._req = p; });
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (!b) return;
@@ -849,7 +901,7 @@ function openEditor(k){
   } else if (k === 'towards') {
     modal('Heading towards', `<p>The loop leans towards ${detectTowardsLabel(p)}. Loops can’t be aimed exactly, so this picks the option that gets closest.</p>` +
       optRows([['keep',`Keep ${detectTowardsLabel(p)}`,''],['none','No destination','Any direction']], 'keep'), [['Cancel', false]], 'Edit');
-    bindOpts(v => v === 'none' ? applyEdit({noTowards:true}) : close());
+    bindOpts(v => v === 'none' ? applyEdit({noTowards:true, towardsPlace:null}) : close());
   } else if (k === 'type') {
     modal('Ride type', optRows([['Road','Road ride','Tarmac'],['Gravel','Gravel ride','Lanes & tracks'],['MTB','MTB ride','Trails']], p.type), [['Cancel', false]], 'Edit');
     bindOpts(v => applyEdit({type:v}));
@@ -943,6 +995,7 @@ function refine(text){
   if (/gravel/.test(t)) p.type = 'Gravel';
   if (/no (café|cafe|coffee|stop)/.test(t)) p.cafe = false; else if (/café|cafe|coffee/.test(t)) p.cafe = true;
   p.seed = hash(p.text + '|' + text); p.text = `${current.p.text} — then: ${text}`;
+  if (RELAY && current.req) p._refine = {text, base: {...current.req}};
   generate(p, {quick:true, label:'Refining route', inPlace: $('#route').classList.contains('active')});
 }
 

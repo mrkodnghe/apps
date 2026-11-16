@@ -6,11 +6,84 @@
 //   ALLOWED_ORIGINS  Text     comma-separated sites allowed to use the relay
 //                             (default: https://mrkodnghe.github.io)
 //   PER_MINUTE       Text     requests allowed per visitor per minute (default: 20)
+//   ANTHROPIC_KEY    Secret   Anthropic API key, for /understand (optional; the app falls back without it)
+//   AI_MODEL         Text     Claude model for /understand (default: claude-haiku-5-5)
 
 const ORS = 'https://api.openrouteservice.org';
 const PROFILES = new Set(['cycling-road', 'cycling-regular', 'cycling-mountain', 'foot-walking', 'foot-hiking']);
 const MAX_ROUND_TRIP_M = 100000;   // openrouteservice free-tier limit for round trips
 const CAFE_CATEGORY = 564;         // openrouteservice POI category for cafés
+
+// ---------- AI step: turn a free-text ride request into a structured brief ----------
+const BRIEF_TOOL = {
+  name: 'route_brief',
+  description: 'Record the structured ride brief that a route planner will use to build a loop.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      activity: { type: 'string', enum: ['road', 'gravel', 'mtb'], description: 'Bike type. Default road unless gravel, off-road, trails or MTB are implied.' },
+      start: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['gps', 'place'], description: 'gps when no start place is named (or "from home", "near me"); place when the rider names where to start.' },
+          place: { type: 'string', description: 'Start place name as a geocodable UK place, e.g. "Guildford", "Box Hill", "Richmond Park". Only when type is place.' },
+        },
+        required: ['type'],
+      },
+      towards: { type: ['string', 'null'], description: 'A place or area the loop should head towards or pass through ("into Surrey", "out to Box Hill"), else null.' },
+      distance_km: { type: 'number', description: 'Target loop distance in km. If only a time budget is given, convert it using the pace and stop rules. Clamp to 5–100.' },
+      duration_min: { type: ['number', 'null'], description: 'Total time budget in minutes if the rider gave one (including "back by 12" relative to now), else null.' },
+      climbing: {
+        type: 'object',
+        properties: {
+          target_m: { type: ['number', 'null'], description: 'Total elevation gain in metres if stated or clearly implied, else null.' },
+          preference: { type: 'string', enum: ['flat', 'rolling', 'hilly', 'any'] },
+        },
+        required: ['preference'],
+      },
+      quiet_roads: { type: 'boolean', description: 'True if they want quiet lanes, low traffic, or to avoid main/busy roads.' },
+      cafe_stop: { type: 'boolean', description: 'True if they want a café, coffee or cake stop. False if they say no stops, or nothing about stopping on a short ride.' },
+      title: { type: 'string', description: 'A short route name, 2–4 words, Title case, e.g. "Surrey Hills Loop", "Flat Coffee Spin".' },
+      assumptions: { type: 'array', items: { type: 'string' }, description: 'Up to 4 short notes on guesses you made, e.g. "Loop back to start", "Road bike pace ~25 km/h".' },
+    },
+    required: ['activity', 'start', 'towards', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'title', 'assumptions'],
+  },
+};
+const BRIEF_SYSTEM = `You turn a cyclist's free-text request into a precise brief for a UK route planner that builds loops (start and finish in the same place) on real roads.
+Rules:
+- Always call the route_brief tool. Never reply with plain text.
+- Distances are kilometres; convert miles (1 mi = 1.609 km). Clamp distance_km to 5–100.
+- Pace for converting time to distance: road 25 km/h, gravel 18 km/h, mtb 12 km/h. Subtract 20 minutes for a café stop. Hilly routes are ~15% slower.
+- If neither distance nor time is given, pick a sensible distance from the wording ("quick spin" ~25 km, "long ride" ~80 km, otherwise ~45 km) and say so in assumptions.
+- climbing: "flat"/"easy"/"recovery" → flat; "lumpy"/"hilly"/"climbing" → hilly; a stated figure goes in target_m (use the middle of a range).
+- If a refinement is given with a previous brief, return the full updated brief: change only what the refinement asks for, keep everything else.
+- Keep place names as the rider wrote them, cleaned up (capitalised, no "the" unless part of the name).`;
+
+async function understand(env, body) {
+  const text = String(body.text || '').slice(0, 600).trim();
+  if (!text) return { status: 400, data: { error: 'Missing text' } };
+  const ctx = body.context || {};
+  const lines = [`Current local time: ${String(ctx.now || '').slice(0, 40) || 'unknown'}.`];
+  if (body.previous) lines.push(`Previous brief: ${JSON.stringify(body.previous).slice(0, 2000)}`, `Refinement: ${text}`);
+  else lines.push(`Request: ${text}`);
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env.ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: env.AI_MODEL || 'claude-haiku-5-5',
+      max_tokens: 600,
+      system: BRIEF_SYSTEM,
+      tools: [BRIEF_TOOL],
+      tool_choice: { type: 'tool', name: 'route_brief' },
+      messages: [{ role: 'user', content: lines.join('\n') }],
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) return { status: 502, data: { error: 'AI request failed', detail: data && data.error && data.error.message } };
+  const tool = data && Array.isArray(data.content) && data.content.find(c => c.type === 'tool_use');
+  if (!tool) return { status: 502, data: { error: 'AI gave no brief' } };
+  return { status: 200, data: { brief: tool.input } };
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -27,7 +100,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/health') {
-      return json({ ok: true, configured: !!env.ORS_KEY }, 200, cors);
+      return json({ ok: true, configured: !!env.ORS_KEY, ai: !!env.ANTHROPIC_KEY }, 200, cors);
     }
     if (request.method === 'OPTIONS') return new Response(null, { status: originOk ? 204 : 403, headers: cors });
     if (!originOk) return json({ error: 'This site is not allowed to use the relay' }, 403, cors);
@@ -87,6 +160,13 @@ export default {
           body: JSON.stringify(body),
         });
         return pass(res, cors);
+      }
+
+      // AI: POST /understand  { text, context: { now }, previous? }  →  { brief }
+      if (request.method === 'POST' && url.pathname === '/understand') {
+        if (!env.ANTHROPIC_KEY) return json({ error: 'AI is not set up on the relay' }, 501, cors);
+        const out = await understand(env, await request.json());
+        return json(out.data, out.status, cors);
       }
 
       return json({ error: 'Not found' }, 404, cors);
