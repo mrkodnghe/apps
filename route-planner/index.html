@@ -539,25 +539,44 @@ async function orsFetch(url, opts = {}, ms = 25000){
 }
 const hav = (a, b) => { const R = 6371000, t = Math.PI/180, dLa = (b[1]-a[1])*t, dLo = (b[0]-a[0])*t;
   const x = Math.sin(dLa/2)**2 + Math.cos(a[1]*t)*Math.cos(b[1]*t)*Math.sin(dLo/2)**2; return 2*R*Math.asin(Math.sqrt(x)); };
-function placeFromText(text){
-  const m = text.match(/\b(?:from|around|near|in|into|starting (?:at|from)|start(?:ing)? in)\s+(?:the\s+)?([A-Z][\w'’.-]*(?:\s+(?:upon|on|le|de|[A-Z][\w'’.-]*))*)/);
+const START_WORDS = '(?:from|around|near|in|starting (?:at|from)|start(?:ing)? (?:at|from|in)|based in)';
+const TOWARDS_WORDS = '(?:into|to|towards|through|via|out to)';
+function placeFromText(text, words){
+  const m = text.match(new RegExp(`\\b${words}\\s+(?:the\\s+)?([A-Z][\\w'’.-]*(?:\\s+(?:upon|on|le|de|[A-Z][\\w'’.-]*))*)`));
   return m ? m[1].replace(/[.,]$/, '') : null;
 }
+// GPS: asked for once, then reused for 10 minutes
+let gpsCache = null;
+function getLocation(){
+  if (gpsCache && Date.now() - gpsCache.t < 600000) return Promise.resolve(gpsCache.c);
+  if (!navigator.geolocation) return Promise.reject(new Error('unsupported'));
+  return new Promise((ok, no) => navigator.geolocation.getCurrentPosition(
+    pos => { gpsCache = {t: Date.now(), c: [pos.coords.longitude, pos.coords.latitude]}; ok(gpsCache.c); },
+    err => no(err), {enableHighAccuracy:false, timeout:10000, maximumAge:600000}));
+}
+async function geocode(place){
+  try { const g = await orsFetch(`${ORS}/geocode/search?api_key=${encodeURIComponent(ORS_KEY)}&text=${encodeURIComponent(place)}&boundary.country=GB&size=1`, {}, 10000);
+    const f = g && g.features && g.features[0]; return f ? {c: f.geometry.coordinates, name: f.properties.name || place} : null;
+  } catch (e) { if (e.kind === 'quota') throw e; return null; }
+}
 async function resolveStart(p){
-  const t = p.text.toLowerCase();
-  if (/(near me|from here|from home|my location|where i am|current location|from my house)/.test(t) && navigator.geolocation) {
-    try { const pos = await new Promise((ok, no) => navigator.geolocation.getCurrentPosition(ok, no, {timeout:8000, maximumAge:600000}));
-      return {c:[pos.coords.longitude, pos.coords.latitude], name:'Your'}; } catch (e) { toast('Location unavailable, starting from Dorking'); }
+  if (p.start) return p.start;                                  // refinements keep the same start
+  const t = p.text.toLowerCase(), keys = Object.keys(AREAS).sort((a,b)=>b.length-a.length);
+  // a place the ride should head towards ("into Surrey") steers which loop is picked
+  const towardsKey = keys.find(k => new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
+  if (towardsKey) p.towards = AREAS[towardsKey].c;
+  else { const tp = placeFromText(p.text, TOWARDS_WORDS); if (tp) { const g = await geocode(tp); if (g) p.towards = g.c; } }
+  // an explicit start place ("from Guildford", "in the Chilterns") wins over GPS
+  const startKey = keys.find(k => k !== towardsKey && new RegExp(`\\b(?:${START_WORDS}\\s+(?:the\\s+)?)?${k}\\b`).test(t) && !new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
+  if (startKey) return {c: AREAS[startKey].c, name: AREAS[startKey].name};
+  const sp = placeFromText(p.text, START_WORDS);
+  if (sp) { const g = await geocode(sp); if (g) return g; }
+  // otherwise start and finish where the rider is now
+  try { const c = await getLocation(); return {c, name: 'Your', gps: true}; }
+  catch (e) {
+    toast(e && e.code === 1 ? 'Location is off, so starting from Dorking. Allow location to start where you are' : 'Couldn’t get your location, so starting from Dorking');
+    return {c: AREAS.surrey.c, name: 'Dorking'};
   }
-  const key = Object.keys(AREAS).sort((a,b)=>b.length-a.length).find(k => t.includes(k));
-  if (key) return {c: AREAS[key].c, name: AREAS[key].name};
-  const place = placeFromText(p.text);
-  if (place) {
-    try { const g = await orsFetch(`${ORS}/geocode/search?api_key=${encodeURIComponent(ORS_KEY)}&text=${encodeURIComponent(place)}&boundary.country=GB&size=1`, {}, 10000);
-      const f = g && g.features && g.features[0]; if (f) return {c: f.geometry.coordinates, name: f.properties.name || place};
-    } catch (e) { if (e.kind === 'quota') throw e; }
-  }
-  return {c: AREAS.surrey.c, name: p.place || 'Surrey'};
 }
 async function findCafe(line, cum, total){
   // nearest café to the 40–55% mark of the ride, from OpenStreetMap via openrouteservice POIs
@@ -576,7 +595,7 @@ const SURF = {asphalt:[3], paved:[1,4,5,6,7,14,18], gravel:[2,8,9,10,11,12,13,15
 async function realRoute(p, stage){
   const start = await resolveStart(p);
   const capped = p.dist > ORS_MAX_KM, targetKm = Math.min(p.dist, ORS_MAX_KM), target = targetKm*1000;
-  stage(1, `Loop · ${targetKm}km · from ${start.name === 'Your' ? 'your location' : start.name}`);
+  stage(1, `Loop · ${targetKm}km · from ${start.gps ? 'your location' : start.name}`);
   const base = p.seed % 90, seeds = [base, (base + 37) % 90];
   const req = seed => orsFetch(`${ORS}/v2/directions/${PROFILES[p.type]}/geojson`, {method:'POST',
     headers:{'Authorization':ORS_KEY,'Content-Type':'application/json','Accept':'application/geo+json'},
@@ -588,7 +607,8 @@ async function realRoute(p, stage){
   const mainShare = f => { const w = f.properties.extras && f.properties.extras.waytype; const s = w ? w.summary.find(x => x.value === 1) : null; return s ? s.amount/100 : 0; };
   const score = f => { const d = f.properties.summary.distance, a = f.properties.ascent || 0;
     return Math.abs(d - target)/target*3 + (p.elevGiven ? Math.abs(a - p.elev)/Math.max(p.elev, 150) : 0) + (p.quiet ? mainShare(f)*2 : 0)
-      + (p.flatter ? a/1500 : 0) - (p.hillier ? a/1500 : 0); };
+      + (p.flatter ? a/1500 : 0) - (p.hillier ? a/1500 : 0) + (p.towards ? towardsMiss(f) : 0); };
+  const towardsMiss = f => { const c = f.geometry.coordinates; let m = 1e12; for (let i = 0; i < c.length; i += 10) m = Math.min(m, hav(c[i], p.towards)); return m / Math.max(3000, target/Math.PI); };
   const f = feats.sort((x, y) => score(x) - score(y))[0];
   const coords = f.geometry.coordinates, line = coords.map(c => [c[0], c[1]]), ele = coords.map(c => c[2] || 0);
   const cum = [0]; for (let i = 1; i < line.length; i++) cum.push(cum[i-1] + hav(line[i-1], line[i]));
@@ -617,12 +637,12 @@ async function realRoute(p, stage){
   stage(5, `${asphalt}% asphalt`);
   const speed = {Road:26, Gravel:20, MTB:14}[p.type];
   const mins = Math.round(distKm/speed*60 + ascent*.06 + (p.cafe ? 20 : 0));
-  const p2 = {...p, dist: distKm, elev: ascent};
+  const p2 = {...p, dist: distKm, elev: ascent, start};
   return { real:true, capped, p: p2, mins, climbLen, climbGrad, asphalt, paved, gravel, prof,
     peak: Math.round(cum[bj]/total*63), climbStartFrac: cum[bi]/total, peakFrac: cum[bj]/total,
     cafeFrac: cafe ? cafe.km*1000/total : .5, cafeKm: cafe ? cafe.km : 0, cafeName: cafe ? cafe.name : '', cafeAt: cafe ? cafe.at : line[0],
     segments: f.properties.segments[0].steps.length, summit: Math.round(ele[bj]),
-    title: start.name === 'Your' ? 'Your loop' : `${start.name} loop`,
+    title: start.gps ? 'Your loop' : `${start.name} loop`,
     line, ele, climb: line.slice(bi, bj + 1), start: line[0], summitAt: line[bj],
     world: {fc:{type:'FeatureCollection', features:[]}, labels:[]}, origin: start.c };
 }
