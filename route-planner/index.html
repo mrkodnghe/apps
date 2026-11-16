@@ -71,7 +71,12 @@ button{background:none;border:0;cursor:pointer}
 .pager{display:flex;gap:8px;justify-content:center;margin:18px 0;flex:none}
 .pager i{width:8px;height:8px;border-radius:4px;background:rgba(242,242,242,.35);transition:width .25s,background .25s}
 .pager i.on{width:20px;background:var(--fg)}
-#home .input{margin:auto 0 calc(var(--safe-b) + 32px)}
+#home{overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+#home::-webkit-scrollbar{display:none}
+#home > *{flex-shrink:0}
+#home .input{position:sticky;bottom:calc(var(--safe-b) + 32px);z-index:5;margin:auto 0 calc(var(--safe-b) + 32px);background:rgba(22,22,22,.86)}
+#home .fadeout{position:sticky;bottom:0;height:0;flex:none;z-index:4;pointer-events:none}
+#home .fadeout::before{content:"";position:absolute;left:-32px;right:-32px;bottom:0;height:calc(var(--safe-b) + 128px);background:linear-gradient(180deg,rgba(0,0,0,0),#000 70%)}
 
 /* ---------- Generating / Ready ---------- */
 .status{display:flex;align-items:center;gap:10px;margin-top:40px}
@@ -178,6 +183,7 @@ button{background:none;border:0;cursor:pointer}
       <input id="promptInput" type="text" placeholder="Describe your route…" enterkeyhint="go" aria-label="Describe your route">
       <button class="mic" id="micBtn" type="button" aria-label="Speak your route"></button>
     </form>
+    <div class="fadeout" aria-hidden="true"></div>
   </section>
 
   <!-- ================= GENERATING ================= -->
