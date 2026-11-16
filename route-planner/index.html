@@ -113,6 +113,13 @@ button{background:none;border:0;cursor:pointer}
 .panel.steps-panel{background:linear-gradient(180deg,#C56336 25%,#B52C55 100%)}
 .panel.ready-panel{background:linear-gradient(180deg,#434ACB 10%,#4CD861 100%)}
 .steps{list-style:none;display:flex;flex-direction:column;gap:22px}
+/* Generating: steps reveal one at a time, and the panel grows with them */
+#steps{gap:0}
+#steps .step{display:grid;grid-template-rows:1fr;margin-top:22px;opacity:1;
+  transition:grid-template-rows .5s cubic-bezier(.2,.8,.2,1),margin-top .5s cubic-bezier(.2,.8,.2,1),opacity .35s ease .12s}
+#steps .step:first-child{margin-top:0}
+#steps .step.hidden{grid-template-rows:0fr;margin-top:0;opacity:0;transition:grid-template-rows .5s cubic-bezier(.2,.8,.2,1),margin-top .5s cubic-bezier(.2,.8,.2,1),opacity .2s}
+#steps .step-in{display:flex;align-items:center;gap:16px;min-height:0;overflow:hidden}
 .step{display:flex;align-items:center;gap:16px;font-size:16px;font-weight:500;transition:opacity .3s}
 .step .ic{width:16px;height:16px;display:grid;place-items:center;flex:none}
 .step .lbl{flex:1}
@@ -660,7 +667,7 @@ const SURF = {asphalt:[3], paved:[1,4,5,6,7,14,18], gravel:[2,8,9,10,11,12,13,15
 async function realRoute(p, stage){
   const start = await resolveStart(p);
   const capped = p.dist > ORS_MAX_KM, targetKm = Math.min(p.dist, ORS_MAX_KM), target = targetKm*1000;
-  stage(1, `Loop · ${targetKm}km · from ${start.gps ? 'your location' : start.name}`);
+  stage(1, `${targetKm}km · ${start.gps ? 'from you' : start.name}`);
   const base = p.seed % 90, seeds = [base, (base + 37) % 90];
   const req = seed => orsFetch(`${ORS}/v2/directions/${PROFILES[p.type]}/geojson`, {method:'POST',
     headers:{'Authorization':ORS_KEY,'Content-Type':'application/json','Accept':'application/geo+json'},
@@ -721,7 +728,7 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   $('#genLabel').textContent = label; $('#genQuote').textContent = `“${p.text}”`; $('#readyQuote').textContent = `“${p.text}”`;
   $$('.rideType').forEach(e => e.textContent = p.type + ' ride');
   const labels = ['Reading your description', p.quiet ? 'Finding quiet roads' : 'Finding the best roads', 'Placing the climb', p.cafe ? 'Adding a café stop' : 'Skipping café stops', 'Checking surface & elevation'];
-  $('#steps').innerHTML = labels.map(l => `<li class="step pending"><span class="ic"><i></i></span><span class="lbl">${l}</span><span class="meta"></span></li>`).join('');
+  $('#steps').innerHTML = labels.map((l, i) => `<li class="step ${i ? 'pending hidden' : 'active'}"><div class="step-in"><span class="ic"><i></i></span><span class="lbl">${l}</span><span class="meta"></span></div></li>`).join('');
   const els = $$('#steps .step');
   const CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   let doneSteps = 0, shown = 0, finished = false;
@@ -737,7 +744,8 @@ async function generate(text, {quick=false, label='Generating your route', inPla
     const pct = Math.round(shown);
     dotNum($('#genNum'), pct + '%'); bar($('#genBar'), Math.max(1, Math.round(pct/100*30)));
     const active = Math.min(4, doneSteps);
-    els.forEach((e,i) => { const done = i < doneSteps; e.className = 'step ' + (done ? 'done' : i === active ? 'active' : 'pending'); e.querySelector('.ic').innerHTML = done ? CHECK : '<i></i>'; });
+    els.forEach((e,i) => { const done = i < doneSteps, cls = 'step ' + (done ? 'done' : i === active ? 'active' : 'pending hidden'), ic = done ? CHECK : '<i></i>';
+      if (e.className !== cls) e.className = cls; const icEl = e.querySelector('.ic'); if (icEl.innerHTML !== ic) icEl.innerHTML = ic; });
     $('#genStep').textContent = `Step ${Math.min(5, doneSteps + 1)}/5`;
     $('#genEta').textContent = pct >= 100 ? 'Done' : doneSteps ? 'Routing on real roads' : 'Est. 5 sec';
     if (pct >= 100) { clearInterval(timer); setTimeout(() => { if (id === runId) (quick ? openRoute() : showReady()); }, 400); }
