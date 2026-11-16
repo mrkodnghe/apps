@@ -587,11 +587,11 @@ function renderSheet(R){
 }
 
 /* ---------- Real routing: OpenRouteService (openrouteservice.org) ---------- */
-// Prototype key, visible in the page source. Move it behind a small relay before sharing widely.
-const ORS_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjI2MWJjOTVjNjQzZDQxNTZiOGFlZmNkMzgyOGJlNTJiIiwiaCI6Im11cm11cjY0In0=';
+// No key in the page: requests go through the Cloudflare Worker relay below, which holds it.
+const ORS_KEY = '';
 const ORS = 'https://api.openrouteservice.org';
 // Cloudflare Worker relay that holds the key (see /relay/worker.js). When set, the key above is not used.
-const RELAY = '';
+const RELAY = 'https://route-relay.calm-cloud-eba5.workers.dev';
 const orsReq = {
   directions: (profile, body) => RELAY
     ? [`${RELAY}/directions/${profile}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}]
