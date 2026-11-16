@@ -948,24 +948,40 @@ $('#penBtn').addEventListener('click', () => toHome(true));
 $('#viewBtn').addEventListener('click', openRoute);
 $('#backBtn').addEventListener('click', () => show('home'));
 $('#profileBtn').addEventListener('click', () => toast('Profiles aren’t part of this prototype'));
-$('#exportBtn').addEventListener('click', () => {
-  modal('Export route', `<div class="opts">
-      <button class="opt" data-k="gpx">GPX file <span>Copy</span></button>
-      <button class="opt" data-k="Garmin">Garmin Connect <span>Not connected</span></button>
-      <button class="opt" data-k="Wahoo">Wahoo <span>Not connected</span></button></div>`, [['Close', false]], 'Export');
-  $$('#modalBody .opt').forEach(b => b.addEventListener('click', () => {
-    if (b.dataset.k !== 'gpx') { toast(`${b.dataset.k} sync isn’t connected in this prototype`); return; }
-    modal('Your GPX file', `<p>${current.real ? 'This GPX follows real roads with elevation, ready for a bike computer.' : 'This is a sample route, so the GPX follows the drawn loop, not real roads.'} Copy it and save it as a .gpx file.</p><textarea readonly id="gpxText">${gpx(current)}</textarea>`,
-      [['Close', false], ['Copy GPX', true, async () => { try { await navigator.clipboard.writeText($('#gpxText').value); toast('GPX copied'); } catch { $('#gpxText').select(); toast('Select all and copy'); } }]], 'Export');
-  }));
+// Export: hand the GPX file to the system share sheet so riders can pick Wahoo ELMNT, Garmin, Komoot, Files…
+const esc = t => t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+function gpxFile(R){
+  const name = (R.title || 'Route').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') + '.gpx', xml = gpxRaw(R);
+  // iOS works out which apps can open the file from its .gpx name; try the proper type first, then generic ones
+  for (const type of ['application/gpx+xml', 'application/octet-stream', 'text/xml']) {
+    const f = new File([xml], name, {type});
+    if (navigator.canShare && navigator.canShare({files:[f]})) return f;
+  }
+  return new File([xml], name, {type:'application/gpx+xml'});
+}
+function gpxFallback(R, note){
+  const f = gpxFile(R), url = URL.createObjectURL(f);
+  modal('Export route', `<p>${note} ${R.real ? 'This GPX follows real roads with elevation, ready for a bike computer.' : 'This is a sample route, so the GPX follows the drawn loop, not real roads.'}</p>
+    <a class="opt" href="${url}" download="${f.name}" style="text-decoration:none;color:inherit;margin-bottom:8px">Download ${esc(f.name)} <span>GPX</span></a>
+    <textarea readonly id="gpxText">${esc(gpxRaw(R))}</textarea>`,
+    [['Close', false], ['Copy GPX', true, async () => { try { await navigator.clipboard.writeText(gpxRaw(R)); toast('GPX copied'); } catch { $('#gpxText').select(); toast('Select all and copy'); } }]], 'Export');
+}
+$('#exportBtn').addEventListener('click', async () => {
+  const R = current; if (!R) return;
+  const f = gpxFile(R);
+  if (navigator.share && navigator.canShare && navigator.canShare({files:[f]})) {
+    try { await navigator.share({files:[f], title: R.title}); }
+    catch (e) { if (e.name !== 'AbortError') gpxFallback(R, 'Sharing isn’t available here, so download or copy the file instead.'); }
+  } else gpxFallback(R, 'This browser can’t open the share sheet for files, so download or copy the GPX instead.');
 });
 $('#aboutBtn').addEventListener('click', () => modal('About this prototype',
   `<p>Describe a ride by typing or tapping the mic and speaking, and you’ll get a matching loop with distance, climbing, time, surface and a café stop. Refine it with things like “Make 10km shorter”.</p><p>Routes are built on real roads by openrouteservice, with real elevation and surface data, and café stops come from OpenStreetMap. The map is MapLibre with an OpenFreeMap dark basemap. If live routing isn’t available, a sample route is shown instead.</p>`,
   [['Got it', true]], 'Concept 4'));
-function gpx(R){ const step = Math.max(1, Math.floor(R.line.length / 1500)), out = [];
+function gpxRaw(R){ const step = Math.max(1, Math.floor(R.line.length / 1500)), out = [];
   for (let i = 0; i < R.line.length; i += step) out.push(i); if (out[out.length-1] !== R.line.length-1) out.push(R.line.length-1);
   const pt = i => { const [lo, la] = R.line[i]; return `    <trkpt lat="${la.toFixed(6)}" lon="${lo.toFixed(6)}">${R.ele ? `<ele>${R.ele[i].toFixed(1)}</ele>` : ''}</trkpt>`; };
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Route planner prototype" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk><name>${R.title}</name><trkseg>\n${out.map(pt).join('\n')}\n  </trkseg></trk>\n</gpx>`.replace(/</g,'&lt;'); }
+  const title = (R.title || 'Route').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Route planner prototype" xmlns="http://www.topografix.com/GPX/1/1">\n  <metadata><name>${title}</name></metadata>\n  <trk><name>${title}</name><type>${R.p.type === 'Road' ? 'cycling' : 'mountain_biking'}</type><trkseg>\n${out.map(pt).join('\n')}\n  </trkseg></trk>\n</gpx>\n`; }
 
 /* ---------- Modal + toast ---------- */
 let tt;
