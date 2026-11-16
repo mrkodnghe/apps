@@ -313,7 +313,8 @@ function parsePrompt(text) {
   const speed = {Road:26, Gravel:20, MTB:14}[p.type];
   p.dist = km ? +km[1] : mi ? Math.round(+mi[1]*1.609) : hrs ? Math.round(+hrs[1]*speed*.85) : 50;
   p.dist = Math.max(5, Math.min(250, Math.round(p.dist)));
-  if (elev && !(km && elev[0].includes(km[0]))) p.elev = elev[2] ? Math.round((+elev[1] + +elev[2]) / 2) : +elev[1];
+  p.elevGiven = !!(elev && !(km && elev[0].includes(km[0])));
+  if (p.elevGiven) p.elev = elev[2] ? Math.round((+elev[1] + +elev[2]) / 2) : +elev[1];
   else p.elev = Math.round(p.dist * (/(hill|climb|mountain|lumpy)/.test(t) ? 14 : /(flat|easy|recovery)/.test(t) ? 3 : 6));
   p.cafe = !/(no (café|cafe|coffee|stop))/.test(t);
   p.quiet = /(quiet|busy|traffic|main road)/.test(t);
@@ -441,7 +442,7 @@ function ensureMap(){
       const res = await fetch(LIVE_STYLE, {signal: ctl.signal}); clearTimeout(to); if (res.ok) { style = LIVE_STYLE; live = true; } } catch (e) { /* blocked or offline: use built-in dark style */ }
     map = new maplibregl.Map({ container:'map', style, center:[-0.33,51.23], zoom:10, attributionControl:false, pitchWithRotate:false, dragRotate:false, fadeDuration:0 });
     map.touchZoomRotate.disableRotation();
-    $('#attrib').textContent = live ? '© OpenFreeMap © OpenStreetMap' : 'MapLibre GL · dark · demo geography';
+    $('#attrib').textContent = live ? '© OpenFreeMap © OpenStreetMap · Routing openrouteservice' : 'MapLibre GL · dark · demo geography';
     map.on('load', () => {
       map.addSource('route', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
       map.addSource('climb', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
@@ -516,35 +517,155 @@ function renderSheet(R){
   $('#genAgo').textContent = 'Generated just now';
 }
 
+/* ---------- Real routing: OpenRouteService (openrouteservice.org) ---------- */
+// Prototype key, visible in the page source. Move it behind a small relay before sharing widely.
+const ORS_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjI2MWJjOTVjNjQzZDQxNTZiOGFlZmNkMzgyOGJlNTJiIiwiaCI6Im11cm11cjY0In0=';
+const ORS = 'https://api.openrouteservice.org';
+const PROFILES = {Road:'cycling-road', Gravel:'cycling-regular', MTB:'cycling-mountain'};
+const ORS_MAX_KM = 100;                      // free round-trip limit
+class RouteError extends Error { constructor(msg, kind){ super(msg); this.kind = kind; } }
+async function orsFetch(url, opts = {}, ms = 25000){
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), ms);
+  let res; try { res = await fetch(url, {...opts, signal: ctl.signal}); }
+  catch (e) { throw new RouteError(e.name === 'AbortError' ? 'Routing took too long' : 'Couldn’t reach the routing service', 'network'); }
+  finally { clearTimeout(to); }
+  let body = null; try { body = await res.json(); } catch (e) {}
+  if (!res.ok) {
+    const msg = body && body.error && (body.error.message || body.error) || res.statusText;
+    if (res.status === 429 || res.status === 403) throw new RouteError('Today’s free routing allowance is used up', 'quota');
+    throw new RouteError(typeof msg === 'string' ? msg : 'Routing failed', 'route');
+  }
+  return body;
+}
+const hav = (a, b) => { const R = 6371000, t = Math.PI/180, dLa = (b[1]-a[1])*t, dLo = (b[0]-a[0])*t;
+  const x = Math.sin(dLa/2)**2 + Math.cos(a[1]*t)*Math.cos(b[1]*t)*Math.sin(dLo/2)**2; return 2*R*Math.asin(Math.sqrt(x)); };
+function placeFromText(text){
+  const m = text.match(/\b(?:from|around|near|in|into|starting (?:at|from)|start(?:ing)? in)\s+(?:the\s+)?([A-Z][\w'’.-]*(?:\s+(?:upon|on|le|de|[A-Z][\w'’.-]*))*)/);
+  return m ? m[1].replace(/[.,]$/, '') : null;
+}
+async function resolveStart(p){
+  const t = p.text.toLowerCase();
+  if (/(near me|from here|from home|my location|where i am|current location|from my house)/.test(t) && navigator.geolocation) {
+    try { const pos = await new Promise((ok, no) => navigator.geolocation.getCurrentPosition(ok, no, {timeout:8000, maximumAge:600000}));
+      return {c:[pos.coords.longitude, pos.coords.latitude], name:'Your'}; } catch (e) { toast('Location unavailable, starting from Dorking'); }
+  }
+  const key = Object.keys(AREAS).sort((a,b)=>b.length-a.length).find(k => t.includes(k));
+  if (key) return {c: AREAS[key].c, name: AREAS[key].name};
+  const place = placeFromText(p.text);
+  if (place) {
+    try { const g = await orsFetch(`${ORS}/geocode/search?api_key=${encodeURIComponent(ORS_KEY)}&text=${encodeURIComponent(place)}&boundary.country=GB&size=1`, {}, 10000);
+      const f = g && g.features && g.features[0]; if (f) return {c: f.geometry.coordinates, name: f.properties.name || place};
+    } catch (e) { if (e.kind === 'quota') throw e; }
+  }
+  return {c: AREAS.surrey.c, name: p.place || 'Surrey'};
+}
+async function findCafe(line, cum, total){
+  // nearest café to the 40–55% mark of the ride, from OpenStreetMap via openrouteservice POIs
+  const idx = cum.findIndex(d => d >= total*.45), pt = line[Math.max(0, idx)];
+  try { const r = await orsFetch(`${ORS}/pois`, {method:'POST', headers:{'Authorization':ORS_KEY,'Content-Type':'application/json'},
+      body: JSON.stringify({request:'pois', geometry:{geojson:{type:'Point', coordinates:pt}, buffer:2000}, filters:{category_ids:[564]}, limit:20})}, 10000);
+    const named = (r.features || []).filter(f => f.properties.osm_tags && f.properties.osm_tags.name);
+    if (named.length) { let best = null, bd = 1e12;
+      named.forEach(f => { for (let i = 0; i < line.length; i += 3) { const d = hav(f.geometry.coordinates, line[i]); if (d < bd) { bd = d; best = {f, i}; } } });
+      if (best && bd < 1500) return {at: best.f.geometry.coordinates, name: best.f.properties.osm_tags.name, km: Math.round(cum[best.i]/1000)};
+    }
+  } catch (e) {}
+  return {at: pt, name: 'Café stop', km: Math.round(cum[Math.max(0, idx)]/1000)};
+}
+const SURF = {asphalt:[3], paved:[1,4,5,6,7,14,18], gravel:[2,8,9,10,11,12,13,15,16,17]};
+async function realRoute(p, stage){
+  const start = await resolveStart(p);
+  const capped = p.dist > ORS_MAX_KM, targetKm = Math.min(p.dist, ORS_MAX_KM), target = targetKm*1000;
+  stage(1, `Loop · ${targetKm}km · from ${start.name === 'Your' ? 'your location' : start.name}`);
+  const base = p.seed % 90, seeds = [base, (base + 37) % 90];
+  const req = seed => orsFetch(`${ORS}/v2/directions/${PROFILES[p.type]}/geojson`, {method:'POST',
+    headers:{'Authorization':ORS_KEY,'Content-Type':'application/json','Accept':'application/geo+json'},
+    body: JSON.stringify({coordinates:[start.c], elevation:true, extra_info:['surface','waytype'], instructions:true, radiuses:[5000],
+      options:{round_trip:{length: Math.round(target*.86), points: targetKm < 35 ? 4 : 5, seed}}})});
+  const settled = await Promise.allSettled(seeds.map(req));
+  const feats = settled.filter(r => r.status === 'fulfilled').map(r => r.value.features[0]);
+  if (!feats.length) throw settled[0].reason;
+  const mainShare = f => { const w = f.properties.extras && f.properties.extras.waytype; const s = w ? w.summary.find(x => x.value === 1) : null; return s ? s.amount/100 : 0; };
+  const score = f => { const d = f.properties.summary.distance, a = f.properties.ascent || 0;
+    return Math.abs(d - target)/target*3 + (p.elevGiven ? Math.abs(a - p.elev)/Math.max(p.elev, 150) : 0) + (p.quiet ? mainShare(f)*2 : 0)
+      + (p.flatter ? a/1500 : 0) - (p.hillier ? a/1500 : 0); };
+  const f = feats.sort((x, y) => score(x) - score(y))[0];
+  const coords = f.geometry.coordinates, line = coords.map(c => [c[0], c[1]]), ele = coords.map(c => c[2] || 0);
+  const cum = [0]; for (let i = 1; i < line.length; i++) cum.push(cum[i-1] + hav(line[i-1], line[i]));
+  const total = cum[cum.length-1], distKm = Math.round(total/1000), ascent = Math.round(f.properties.ascent || 0);
+  stage(2, `${Math.round(mainShare(f)*100)}% main roads`);
+  // biggest climb: largest height gain within a ~12km window, sampled every ~100m
+  const smp = []; for (let i = 0, next = 0; i < line.length; i++) if (cum[i] >= next) { smp.push(i); next = cum[i] + 100; }
+  let bi = 0, bj = 0, bg = 0;
+  for (let a = 0; a < smp.length; a++) for (let b = a + 1; b < smp.length && cum[smp[b]] - cum[smp[a]] < 12000; b++) {
+    const g = ele[smp[b]] - ele[smp[a]]; if (g > bg) { bg = g; bi = smp[a]; bj = smp[b]; } }
+  const climbLen = +(((cum[bj] - cum[bi]) || 100)/1000).toFixed(1), climbGrad = Math.max(1, Math.round(bg / ((cum[bj] - cum[bi]) || 1) * 100));
+  stage(3, `${climbLen}km @ ${climbGrad}%`);
+  // elevation profile: 64 samples by distance
+  const lo = Math.min(...ele), hi = Math.max(...ele), range = Math.max(hi - lo, 120), prof = [];
+  for (let k = 0, i = 0; k < 64; k++) { const d = total*k/63; while (i < cum.length - 1 && cum[i+1] < d) i++; prof.push(.12 + .88*(ele[i] - lo)/range); }
+  const cafe = p.cafe ? await findCafe(line, cum, total) : null;
+  stage(4, p.cafe ? cafe.name : '—');
+  const sum = (f.properties.extras && f.properties.extras.surface ? f.properties.extras.surface.summary : []);
+  const share = vals => sum.filter(x => vals.includes(x.value)).reduce((t, x) => t + x.distance, 0);
+  let A = share(SURF.asphalt), P = share(SURF.paved), G = share(SURF.gravel), K = A + P + G;
+  let asphalt, paved, gravel;
+  if (K < total*.2) { asphalt = p.type === 'Road' ? 85 : 45; gravel = p.type === 'Road' ? 5 : 40; paved = 100 - asphalt - gravel; }
+  else { asphalt = Math.round(A/K*100); gravel = Math.round(G/K*100); paved = 100 - asphalt - gravel; }
+  stage(5, `${asphalt}% asphalt`);
+  const speed = {Road:26, Gravel:20, MTB:14}[p.type];
+  const mins = Math.round(distKm/speed*60 + ascent*.06 + (p.cafe ? 20 : 0));
+  const p2 = {...p, dist: distKm, elev: ascent};
+  return { real:true, capped, p: p2, mins, climbLen, climbGrad, asphalt, paved, gravel, prof,
+    peak: Math.round(cum[bj]/total*63), climbStartFrac: cum[bi]/total, peakFrac: cum[bj]/total,
+    cafeFrac: cafe ? cafe.km*1000/total : .5, cafeKm: cafe ? cafe.km : 0, cafeName: cafe ? cafe.name : '', cafeAt: cafe ? cafe.at : line[0],
+    segments: f.properties.segments[0].steps.length, summit: Math.round(ele[bj]),
+    title: start.name === 'Your' ? 'Your loop' : `${start.name} loop`,
+    line, ele, climb: line.slice(bi, bj + 1), start: line[0], summitAt: line[bj],
+    world: {fc:{type:'FeatureCollection', features:[]}, labels:[]}, origin: start.c };
+}
+
 /* ---------- Flow ---------- */
 function show(id){ $$('.screen').forEach(s => { const on = s.id === id; if (on && !s.classList.contains('active')) s.scrollTop = 0; s.classList.toggle('active', on); }); }
-let current = null, timer = null, startedAt = 0;
+let current = null, timer = null, startedAt = 0, runId = 0;
 function bar(el, filled, total=30){ el.innerHTML = Array.from({length:total},(_,i)=>`<i class="${i<filled-1?'on':i===filled-1?(filled===total?'on':'lead'):''}"></i>`).join(''); }
-function generate(text, {quick=false, label='Generating your route'} = {}){
-  const p = typeof text === 'string' ? parsePrompt(text) : text;
-  const R = buildRoute(p); current = R;
+async function generate(text, {quick=false, label='Generating your route'} = {}){
+  const p = typeof text === 'string' ? parsePrompt(text) : text, id = ++runId;
   $('#genLabel').textContent = label; $('#genQuote').textContent = `“${p.text}”`; $('#readyQuote').textContent = `“${p.text}”`;
   $$('.rideType').forEach(e => e.textContent = p.type + ' ride');
-  const steps = [
-    ['Reading your description', `Loop · ${p.dist}km · ${p.elev > 250 ? '1 climb' : 'flat'}`],
-    [p.quiet ? 'Finding quiet roads' : 'Finding the best roads', `${R.segments} segments`],
-    ['Placing the climb', `${R.climbLen}km @ ${R.climbGrad}%`],
-    [p.cafe ? 'Adding a café stop' : 'Skipping café stops', p.cafe ? R.cafeName : '—'],
-    ['Checking surface & elevation', `${R.asphalt}% asphalt`]];
-  $('#steps').innerHTML = steps.map(([l,m]) => `<li class="step pending"><span class="ic"><i></i></span><span class="lbl">${l}</span><span class="meta">${m}</span></li>`).join('');
-  const total = quick ? 2600 : 6200; startedAt = performance.now(); show('gen'); clearInterval(timer);
-  ensureMap(); // warm up the map while the route builds
+  const labels = ['Reading your description', p.quiet ? 'Finding quiet roads' : 'Finding the best roads', 'Placing the climb', p.cafe ? 'Adding a café stop' : 'Skipping café stops', 'Checking surface & elevation'];
+  $('#steps').innerHTML = labels.map(l => `<li class="step pending"><span class="ic"><i></i></span><span class="lbl">${l}</span><span class="meta"></span></li>`).join('');
   const els = $$('#steps .step');
   const CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  let doneSteps = 0, shown = 0, finished = false;
+  const stage = (n, meta) => { if (id !== runId) return; doneSteps = Math.max(doneSteps, n); if (meta != null) els[n-1].querySelector('.meta').textContent = meta; };
+  startedAt = performance.now(); show('gen'); clearInterval(timer); ensureMap();
   const tick = () => {
-    const t = Math.min(1, (performance.now() - startedAt) / total), pct = Math.round((1 - Math.pow(1 - t, 1.6)) * 100);
+    const el = (performance.now() - startedAt)/1000;
+    const timeGoal = 88*(1 - Math.exp(-el/(quick ? 1.6 : 2.6)));            // creeps towards 88% while waiting
+    const goal = finished ? 100 : Math.max(Math.min(timeGoal, 18 + doneSteps*14), doneSteps*17);
+    shown += (goal - shown) * (finished ? .35 : .12); if (finished && goal - shown < .6) shown = 100;
+    const pct = Math.round(shown);
     dotNum($('#genNum'), pct + '%'); bar($('#genBar'), Math.max(1, Math.round(pct/100*30)));
-    const active = Math.min(4, Math.floor(t * 5));
-    els.forEach((el,i) => { const done = i < active || t >= 1; el.className = 'step ' + (done ? 'done' : i === active ? 'active' : 'pending'); el.querySelector('.ic').innerHTML = done ? CHECK : '<i></i>'; });
-    $('#genStep').textContent = `Step ${active+1}/5`; $('#genEta').textContent = t >= 1 ? 'Done' : `Est. ${Math.max(1, Math.ceil((1-t)*total/1000))} sec`;
-    if (t >= 1) { clearInterval(timer); setTimeout(() => quick ? openRoute() : showReady(), 450); }
+    const active = Math.min(4, doneSteps);
+    els.forEach((e,i) => { const done = i < doneSteps; e.className = 'step ' + (done ? 'done' : i === active ? 'active' : 'pending'); e.querySelector('.ic').innerHTML = done ? CHECK : '<i></i>'; });
+    $('#genStep').textContent = `Step ${Math.min(5, doneSteps + 1)}/5`;
+    $('#genEta').textContent = pct >= 100 ? 'Done' : doneSteps ? 'Routing on real roads' : 'Est. 5 sec';
+    if (pct >= 100) { clearInterval(timer); setTimeout(() => { if (id === runId) (quick ? openRoute() : showReady()); }, 400); }
   };
   tick(); timer = setInterval(tick, 80);
+  let R;
+  try { R = await realRoute(p, stage); }
+  catch (e) {
+    if (id !== runId) return;
+    // live routing unavailable (blocked here, quota, or no roads found): fall back to a simulated loop
+    R = buildRoute(p); R.simulated = true;
+    toast(e.kind === 'quota' ? 'Free routing limit reached, showing a sample route' : e.kind === 'route' ? 'Couldn’t route there, showing a sample route' : 'Live routing unavailable, showing a sample route');
+    [`Loop · ${p.dist}km`, `${R.segments} segments`, `${R.climbLen}km @ ${R.climbGrad}%`, p.cafe ? R.cafeName : '—', `${R.asphalt}% asphalt`].forEach((m, i) => stage(i + 1, m));
+  }
+  if (id !== runId) return;
+  current = R; doneSteps = 5; finished = true;
+  if (R.capped) toast(`Free routing caps loops at ${ORS_MAX_KM}km`);
 }
 function showReady(){
   const R = current; dotNum($('#readyNum'), '100%'); bar($('#readyBar'), 30, 30);
@@ -608,8 +729,8 @@ function refine(text){
   if (/short|less|reduce/.test(t) && !/climb/.test(t)) p.dist = Math.max(5, p.dist - (n ? +n[1] : Math.round(p.dist*.1)));
   if (/long|more distance|extend/.test(t)) p.dist = Math.min(250, p.dist + (n ? +n[1] : Math.round(p.dist*.1)));
   if (n && !/short|long|less|more|extend|reduce/.test(t)) p.dist = +n[1];
-  if (/flat|less climb|fewer hills|easier/.test(t)) p.elev = Math.round(p.elev*.6);
-  if (/hill|more climb|harder|lumpy/.test(t)) p.elev = Math.round(p.elev*1.4);
+  if (/flat|less climb|fewer hills|easier/.test(t)) { p.elev = Math.round(p.elev*.6); p.elevGiven = true; p.flatter = true; p.hillier = false; }
+  if (/hill|more climb|harder|lumpy/.test(t)) { p.elev = Math.round(p.elev*1.4); p.elevGiven = true; p.hillier = true; p.flatter = false; }
   if (/gravel/.test(t)) p.type = 'Gravel';
   if (/no (café|cafe|coffee|stop)/.test(t)) p.cafe = false; else if (/café|cafe|coffee/.test(t)) p.cafe = true;
   p.seed = hash(p.text + '|' + text); p.text = `${current.p.text} — then: ${text}`;
@@ -673,7 +794,7 @@ wireInput($('#refineInput'), $('#refineMic'), $('#refineForm'), v => refine(v), 
 
 /* ---------- Buttons ---------- */
 const toHome = (prefill) => { if (prefill) { $('#promptInput').value = current.p.text; $('#promptInput').dispatchEvent(new Event('input')); } show('home'); };
-$('#cancelBtn').addEventListener('click', () => { clearInterval(timer); show('home'); });
+$('#cancelBtn').addEventListener('click', () => { runId++; clearInterval(timer); show('home'); });
 $('#editBtn').addEventListener('click', () => toHome(true));
 $('#penBtn').addEventListener('click', () => toHome(true));
 $('#viewBtn').addEventListener('click', openRoute);
@@ -686,15 +807,17 @@ $('#exportBtn').addEventListener('click', () => {
       <button class="opt" data-k="Wahoo">Wahoo <span>Not connected</span></button></div>`, [['Close', false]], 'Export');
   $$('#modalBody .opt').forEach(b => b.addEventListener('click', () => {
     if (b.dataset.k !== 'gpx') { toast(`${b.dataset.k} sync isn’t connected in this prototype`); return; }
-    modal('Your GPX file', `<p>Downloads are blocked in this preview, so here’s the GPX to copy. The coordinates follow the drawn loop.</p><textarea readonly id="gpxText">${gpx(current)}</textarea>`,
+    modal('Your GPX file', `<p>${current.real ? 'This GPX follows real roads with elevation, ready for a bike computer.' : 'This is a sample route, so the GPX follows the drawn loop, not real roads.'} Copy it and save it as a .gpx file.</p><textarea readonly id="gpxText">${gpx(current)}</textarea>`,
       [['Close', false], ['Copy GPX', true, async () => { try { await navigator.clipboard.writeText($('#gpxText').value); toast('GPX copied'); } catch { $('#gpxText').select(); toast('Select all and copy'); } }]], 'Export');
   }));
 });
 $('#aboutBtn').addEventListener('click', () => modal('About this prototype',
-  `<p>Describe a ride by typing or tapping the mic and speaking, and you’ll get a matching loop with distance, climbing, time, surface and a café stop. Refine it with things like “Make 10km shorter”.</p><p>The map is a real MapLibre GL map in a dark theme. In this preview the roads and woods around the loop are demo geography placed at real coordinates. Hosted on its own site, the same page loads a live OpenStreetMap dark basemap automatically.</p>`,
+  `<p>Describe a ride by typing or tapping the mic and speaking, and you’ll get a matching loop with distance, climbing, time, surface and a café stop. Refine it with things like “Make 10km shorter”.</p><p>Routes are built on real roads by openrouteservice, with real elevation and surface data, and café stops come from OpenStreetMap. The map is MapLibre with an OpenFreeMap dark basemap. If live routing isn’t available, a sample route is shown instead.</p>`,
   [['Got it', true]], 'Concept 4'));
-function gpx(R){ const pts = R.line.filter((_,i) => i % 2 === 0); pts.push(R.line[0]);
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Route planner prototype">\n  <trk><name>${R.title}</name><trkseg>\n${pts.map(([lo,la]) => `    <trkpt lat="${la.toFixed(5)}" lon="${lo.toFixed(5)}"/>`).join('\n')}\n  </trkseg></trk>\n</gpx>`.replace(/</g,'&lt;'); }
+function gpx(R){ const step = Math.max(1, Math.floor(R.line.length / 1500)), out = [];
+  for (let i = 0; i < R.line.length; i += step) out.push(i); if (out[out.length-1] !== R.line.length-1) out.push(R.line.length-1);
+  const pt = i => { const [lo, la] = R.line[i]; return `    <trkpt lat="${la.toFixed(6)}" lon="${lo.toFixed(6)}">${R.ele ? `<ele>${R.ele[i].toFixed(1)}</ele>` : ''}</trkpt>`; };
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Route planner prototype" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk><name>${R.title}</name><trkseg>\n${out.map(pt).join('\n')}\n  </trkseg></trk>\n</gpx>`.replace(/</g,'&lt;'); }
 
 /* ---------- Modal + toast ---------- */
 let tt;
