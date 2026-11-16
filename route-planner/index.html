@@ -80,6 +80,10 @@ button{background:none;border:0;cursor:pointer}
 #home .input{position:absolute;left:32px;right:32px;bottom:calc(var(--safe-b) + 32px);z-index:5;background:rgba(22,22,22,.82);box-shadow:0 12px 40px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.04)}
 
 /* ---------- Generating / Ready ---------- */
+#gen,#ready{overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+#gen::-webkit-scrollbar,#ready::-webkit-scrollbar{display:none}
+#gen > *,#ready > *{flex-shrink:0}
+#gen .quote,#ready .quote{margin-bottom:32px}
 .status{display:flex;align-items:center;gap:10px;margin-top:40px}
 .status .mono{color:rgba(242,242,242,.8)}
 .bignum{display:block;height:clamp(84px,27vw,112px);width:auto;max-width:100%;margin:26px 0 30px}
@@ -508,7 +512,7 @@ function renderSheet(R){
 }
 
 /* ---------- Flow ---------- */
-function show(id){ $$('.screen').forEach(s => s.classList.toggle('active', s.id === id)); }
+function show(id){ $$('.screen').forEach(s => { const on = s.id === id; if (on && !s.classList.contains('active')) s.scrollTop = 0; s.classList.toggle('active', on); }); }
 let current = null, timer = null, startedAt = 0;
 function bar(el, filled, total=30){ el.innerHTML = Array.from({length:total},(_,i)=>`<i class="${i<filled-1?'on':i===filled-1?(filled===total?'on':'lead'):''}"></i>`).join(''); }
 function generate(text, {quick=false, label='Generating your route'} = {}){
