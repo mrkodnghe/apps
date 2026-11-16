@@ -44,7 +44,7 @@ const BRIEF_TOOL = {
       quiet_roads: { type: 'boolean', description: 'True if they want quiet lanes, low traffic, or to avoid main/busy roads.' },
       cafe_stop: { type: 'boolean', description: 'True if they want a café, coffee or cake stop. False if they say no stops, or nothing about stopping on a short ride.' },
       title: { type: 'string', description: 'A short route name, 2–4 words, Title case, e.g. "Surrey Hills Loop", "Flat Coffee Spin".' },
-      assumptions: { type: 'array', items: { type: 'string' }, description: 'Up to 4 short notes on guesses you made, e.g. "Loop back to start", "Road bike pace ~25 km/h".' },
+      assumptions: { type: 'array', items: { type: 'string' }, description: 'Up to 3 guesses you made that the rider might want to change, each 2–6 words, e.g. "Back by 12:00", "Road pace ~25 km/h". Skip obvious ones like looping back to start.' },
     },
     required: ['activity', 'start', 'towards', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'title', 'assumptions'],
   },
