@@ -139,11 +139,21 @@ export default {
         if (!Array.isArray(body.coordinates) || body.coordinates.length < 1 || body.coordinates.length > 8) return json({ error: 'Bad coordinates' }, 400, cors);
         const rt = body.options && body.options.round_trip;
         if (rt && Number(rt.length) > MAX_ROUND_TRIP_M) return json({ error: 'Round trip too long' }, 400, cors);
+        // identical requests (same prompt, retries, re-tests) come from the cache for a day and don't use routing quota
+        const raw = JSON.stringify(body);
+        const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(profile + raw)))].map(b => b.toString(16).padStart(2, '0')).join('');
+        const cacheKey = new Request(`https://relay-cache.local/directions/${hash}`);
+        const hit = await caches.default.match(cacheKey);
+        if (hit) return pass(hit, { ...cors, 'X-Relay-Cache': 'hit' });
         const res = await fetch(`${ORS}/v2/directions/${profile}/geojson`, {
           method: 'POST',
           headers: { 'Authorization': env.ORS_KEY, 'Content-Type': 'application/json', 'Accept': 'application/geo+json' },
-          body: JSON.stringify(body),
+          body: raw,
         });
+        if (res.ok) {
+          const keep = new Response(res.clone().body, { status: 200, headers: { 'Content-Type': 'application/geo+json', 'Cache-Control': 'public, max-age=86400' } });
+          ctx.waitUntil(caches.default.put(cacheKey, keep));
+        }
         return pass(res, cors);
       }
 
@@ -232,6 +242,7 @@ export default {
 function pass(res, cors) {
   const h = new Headers(res.headers);
   for (const [k, v] of Object.entries(cors)) h.set(k, v);
+  h.set('Access-Control-Expose-Headers', 'x-ratelimit-remaining, x-ratelimit-reset, x-relay-cache');   // lets the app see how much routing quota is left
   h.delete('set-cookie');
   h.delete('content-length');
   return new Response(res.body, { status: res.status, headers: h });

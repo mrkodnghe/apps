@@ -678,7 +678,7 @@ async function orsFetch(url, opts = {}, ms = 25000){
   if (!res.ok) {
     const msg = body && body.error && (body.error.message || body.error) || res.statusText;
     if (res.status === 429 && body && /slow down/i.test(String(body.error))) throw new RouteError('Too many routes too quickly, try again in a minute', 'quota');
-    if (res.status === 429 || (res.status === 403 && !RELAY)) throw new RouteError('Today’s free routing allowance is used up', 'quota');
+    if (res.status === 429 || (res.status === 403 && (!RELAY || /quota/i.test(String(body && body.error))))) throw new RouteError('Today’s free routing allowance is used up', 'quota');
     throw new RouteError(typeof msg === 'string' ? msg : 'Routing failed', 'route');
   }
   return body;
@@ -1021,9 +1021,11 @@ async function realRoute(p, stage){
     const routes = await Promise.race([signedP, new Promise(r => setTimeout(() => r(null), p.existing ? 35000 : 20000))]);
     const cands = routes ? signedCandidates(routes, start, target, p) : [];
     // signed routes often use towpaths and tracks a road bike profile avoids, so for road rides also try the best one on the general cycling profile
-    const jobs = cands.map(c => signedFeature(p, start, c));
-    if (p.type === 'Road' && cands.length) jobs.push(signedFeature(p, start, cands[0], PROFILES.Gravel));
-    const got = (await Promise.allSettled(jobs)).filter(r => r.status === 'fulfilled').map(r => r.value).filter(s => s.basedOn.follow >= .3);
+    const settle = async jobs => (await Promise.allSettled(jobs)).filter(r => r.status === 'fulfilled').map(r => r.value);
+    let tried = await settle(cands.map(c => signedFeature(p, start, c)));
+    // only spend an extra routing request on the general profile when the road version barely touches the signed route
+    if (p.type === 'Road' && cands.length && !tried.some(s => s.basedOn.follow >= .45)) tried = tried.concat(await settle([signedFeature(p, start, cands[0], PROFILES.Gravel)]));
+    const got = tried.filter(s => s.basedOn.follow >= .3);
     const sScore = s => score(s.f) - s.basedOn.follow*.8 + (p.type === 'Road' ? s.basedOn.unpaved*1.5 : 0);     // reward riding the signed route, but not lots of gravel on a road bike
     const s = got.sort((a, b) => sScore(a) - sScore(b))[0];
     if (s && (!f || p.existing || sScore(s) < score(f))) { f = s.f; basedOn = {...s.basedOn, asked: !!p.existing}; signedLine = s.seg; }
@@ -1127,7 +1129,7 @@ async function generate(text, {quick=false, label='Generating your route', inPla
     if (id !== runId) return;
     // live routing unavailable (blocked here, quota, or no roads found): fall back to a simulated loop
     R = buildRoute(p); R.simulated = true;
-    toast(e.kind === 'quota' ? 'Free routing limit reached, showing a sample route' : e.kind === 'route' ? 'Couldn’t route there, showing a sample route' : 'Live routing unavailable, showing a sample route');
+    toast(e.kind === 'quota' ? 'Daily routing limit reached, showing a sample route' : e.kind === 'route' ? 'Couldn’t route there, showing a sample route' : 'Live routing unavailable, showing a sample route');
     [`Loop · ${p.dist}km`, `${R.segments} segments`, `${R.climbLen}km @ ${R.climbGrad}%`, p.cafe ? R.cafeName : '—', `${R.asphalt}% asphalt`].forEach((m, i) => stage(i + 1, m));
   }
   if (id !== runId) return;
