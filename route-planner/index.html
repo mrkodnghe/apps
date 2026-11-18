@@ -234,7 +234,9 @@ button{background:none;border:0;cursor:pointer}
 #ready .understood{margin:-8px 0 32px}
 #route .understood{margin:26px 0 0}
 .assume{margin-top:10px;font-size:12px;line-height:1.4;color:rgba(242,242,242,.45)}
-.signed-note{color:rgba(242,242,242,.7);display:flex;gap:8px;align-items:baseline}.signed-note .sdash{flex:none;width:16px;height:0;border-top:2px dashed #4FD17A;transform:translateY(-3px)}
+.signed-note{color:rgba(242,242,242,.7);display:flex;gap:8px;align-items:baseline}.presets button.sel{background:var(--fg);color:#000}
+.signed-note .sdash.lib{border-top-color:var(--fg);border-top-style:solid}
+.signed-note .sdash{flex:none;width:16px;height:0;border-top:2px dashed #4FD17A;transform:translateY(-3px)}
 .modal .actions{display:flex;gap:8px}
 .modal .actions .pill{flex:1}
 .modal .actions .solid{background:var(--fg);color:#000;border-color:var(--fg)}
@@ -393,6 +395,7 @@ function parsePrompt(text) {
   p.existing = /\b(ncn|national (cycle )?route|cycle network|signed route|signposted|existing route|established route|sustrans|avenue verte|eurovelo|ev\d)\b/.test(t);
   const rr = t.match(/\b(?:ncn|national (?:cycle )?route|route)\s*(\d{1,3})\b/);
   p.routeRef = rr ? `NCN ${rr[1]}` : /avenue verte/.test(t) ? 'Avenue Verte' : null;
+  p.known = knownFromText(t);
   return p;
 }
 
@@ -614,14 +617,63 @@ const orsReq = {
 };
 const PROFILES = {Road:'cycling-road', Gravel:'cycling-regular', MTB:'cycling-mountain'};
 const ORS_MAX_KM = 100;                      // free round-trip limit
+/* ---------- Route library: hand-picked routes and laps (from GPX files) the AI can choose from ---------- */
+let LIB = null;
+const libP = fetch('routes-library.json').then(r => r.ok ? r.json() : null).then(j => (LIB = j && Array.isArray(j.routes) ? j : null)).catch(() => null);
+const libRoute = id => LIB && LIB.routes.find(r => r.id === id);
+const NUMW = {one:1, a:1, single:1, two:2, couple:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10};
+function knownFromText(t){
+  if (!LIB) return null;
+  // longest alias wins, so "ballet laps" beats "laps"
+  let best = null;
+  for (const r of LIB.routes) for (const a of r.aliases) if (t.includes(a) && (!best || a.length > best.a.length)) best = {r, a};
+  if (!best) return null;
+  const m = t.match(/\b(\d{1,2}|one|a|single|two|couple|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:of\s+)?(?:full\s+|ballet\s+|short\s+|small\s+|big\s+)?(?:laps?|loops?|times)\b/);
+  const laps = m ? (NUMW[m[1]] || parseInt(m[1], 10)) : null;
+  return {id: best.r.id, laps: laps && laps <= 20 ? laps : null};
+}
+// Ride a library route from the rider's start: there → the exact line (× laps) → back
+async function knownFeature(p, start, target){
+  await libP;
+  const r = libRoute(p.known && p.known.id); if (!r) return null;
+  const L = r.line;
+  let j = 0, dj = 1e12; L.forEach((pt, i) => { const d = hav(pt, start.c); if (d < dj) { dj = d; j = i; } });
+  // join the loop at the point nearest the rider and ride it from there
+  const lap = r.kind === 'lap' ? [...L.slice(j), ...L.slice(1, j + 1)] : L;
+  const lapM = r.km*1000;
+  let there = null, back = null;
+  if (dj > 250) {
+    const leg = (a, b) => orsFetch(...orsReq.directions(PROFILES[p.type], {coordinates: [a, b], elevation:true, extra_info:['surface','waytype'], instructions:true, radiuses:[5000, 300]})).then(x => x.features[0]);
+    [there, back] = await Promise.all([leg(start.c, lap[0].slice(0, 2)), leg(lap[lap.length-1].slice(0, 2), start.c)]);
+  }
+  const legM = (there ? there.properties.summary.distance : 0) + (back ? back.properties.summary.distance : 0);
+  const laps = r.kind !== 'lap' ? 1 : p.known.laps || Math.max(1, Math.min(20, Math.round((target - legM)/lapM)));
+  const coords = [...(there ? there.geometry.coordinates : [])];
+  for (let k = 0; k < laps; k++) coords.push(...(k || there ? lap.slice(1) : lap));
+  if (back) coords.push(...back.geometry.coordinates.slice(1));
+  let dist = 0, gain = 0, base = coords[0][2] || 0;
+  for (let i = 1; i < coords.length; i++) { dist += hav(coords[i-1], coords[i]); const e = coords[i][2] || 0; if (e > base + 1) { gain += e - base; base = e; } else if (e < base - 1) base = e; }
+  // surface and road type: the legs from openrouteservice, the library line from its own notes
+  const sumOf = (key, f) => f && f.properties.extras && f.properties.extras[key] ? f.properties.extras[key].summary : [];
+  const libM = laps*lapM, surfVal = {asphalt: 3, paved: 1, gravel: 2}[r.surface] || 3;
+  const merge = key => [...sumOf(key, there), ...sumOf(key, back), {value: key === 'surface' ? surfVal : 3, distance: libM}]
+    .map(x => ({value: x.value, distance: x.distance, amount: +(x.distance/dist*100).toFixed(2)}));
+  const f = {type: 'Feature', geometry: {type: 'LineString', coordinates: coords},
+    properties: {summary: {distance: dist}, ascent: gain, extras: {surface: {summary: merge('surface')}, waytype: {summary: merge('waytype')}},
+      segments: [{steps: [...(there ? there.properties.segments[0].steps : []), ...(back ? back.properties.segments[0].steps : [])]}]}};
+  return {f, info: {id: r.id, name: r.name, short: r.short, kind: r.kind, laps, lapKm: r.km, direction: r.direction, legKm: Math.round(legM/100)/10, notes: r.notes || ''}};
+}
+
 /* ---------- AI step: the relay asks Claude to turn the prompt into a structured brief ---------- */
 async function aiUnderstand(text, previous, near){
   if (!RELAY) return null;
   const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 9000);
   try {
     const now = new Date().toLocaleString('en-GB', {weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    await Promise.race([libP, new Promise(r => setTimeout(r, 1500))]);
     const res = await fetch(`${RELAY}/understand`, {method:'POST', headers:{'Content-Type':'application/json'}, signal: ctl.signal,
-      body: JSON.stringify({text, context:{now, ...(near ? {start:{lat: +near[1].toFixed(2), lon: +near[0].toFixed(2)}} : {})}, ...(previous ? {previous} : {})})});
+      body: JSON.stringify({text, context:{now, ...(near ? {start:{lat: +near[1].toFixed(2), lon: +near[0].toFixed(2)}} : {})}, ...(previous ? {previous} : {}),
+        library: LIB ? LIB.routes.map(r => ({id: r.id, name: r.name, kind: r.kind, km: r.km, desc: r.desc, aliases: r.aliases.slice(0, 8)})) : []})});
     if (!res.ok) return null;
     const j = await res.json(); return j && j.brief && typeof j.brief === 'object' ? j.brief : null;
   } catch (e) { return null; } finally { clearTimeout(to); }
@@ -630,7 +682,7 @@ function briefFromP(p){
   return { activity: (p.type || 'Road').toLowerCase(), start: p.start && !p.start.gps ? {type:'place', place:p.start.name} : p.startPlace ? {type:'place', place:p.startPlace} : {type:'gps'},
     via: p.via || [], suggested_via: p.suggestedVia || [], towards: p.towardsPlace || null, distance_km: p.dist, duration_min: null,
     climbing: {target_m: p.elevGiven ? p.elev : null, preference: p.flatter ? 'flat' : p.hillier ? 'hilly' : p.elevGiven ? 'rolling' : 'any'},
-    quiet_roads: !!p.quiet, cafe_stop: !!p.cafe, existing_route: !!p.existing, route_name: p.routeRef || null,
+    quiet_roads: !!p.quiet, cafe_stop: !!p.cafe, existing_route: !!p.existing, route_name: p.routeRef || null, known_route: p.known || null,
     title: p.customTitle || p.aiTitle || '', assumptions: p.assumptions || [] };
 }
 function applyBrief(base, b){
@@ -651,6 +703,10 @@ function applyBrief(base, b){
     const said = (q.text || '').toLowerCase(), num = q.routeRef.match(/\d+/), word = q.routeRef.toLowerCase().split(/\s+/).find(w => w.length > 3 && !/^(route|national|cycle|cycleway|network)$/.test(w));
     if (!(num ? new RegExp(`\\b${num[0]}\\b`).test(said) : word && said.includes(word))) q.routeRef = null;
   }
+  if ('known_route' in b) {   // older relays: keep the keyword guess
+    const k = b.known_route; q.known = k && libRoute(k.id) ? {id: k.id, laps: Number.isInteger(k.laps) && k.laps > 0 && k.laps <= 20 ? k.laps : null} : null;
+  }
+  if (q.known && !q.known.laps && base.known && base.known.id === q.known.id && !(Number(b.distance_km) > 0 && Number(b.distance_km) !== base.dist)) q.known.laps = base.known.laps;
   const st = b.start || {type:'gps'};
   if (st.type === 'place' && st.place) {
     if (!(base.start && !base.start.gps && base.start.name.toLowerCase() === st.place.toLowerCase())) { delete q.start; q.startPlace = st.place; q.startGPS = false; }
@@ -993,9 +1049,11 @@ async function realRoute(p, stage){
   }
   // fetch nearby signed cycle routes in the background, in case the new loop doesn't fit (or the rider asked for one)
   const signedP = signedRoutesNear(start.c, targetKm > 60 ? 30 : 20);
-  let feats, genErr = null;
+  let feats, genErr = null, kn = null;
+  if (p.known) { stage(1, 'Using your route library'); kn = await knownFeature(p, start, target).catch(e => { if (e.kind === 'quota') throw e; return null; }); stage(1, meta1); }
   try {
-    if (vias.length) feats = await viaFeatures(p, start, vias, target);
+    if (kn) feats = [kn.f];
+    else if (vias.length) feats = await viaFeatures(p, start, vias, target);
     else if (soft.length) { try { feats = await viaFeatures(p, start, soft, target, 3500); } catch (e) { if (e.kind === 'quota') throw e; feats = null; } }
     if (!feats) {
       const base = p.seed % 90, seeds = [base, (base + 37) % 90];
@@ -1016,7 +1074,7 @@ async function realRoute(p, stage){
   let f = feats.sort((x, y) => score(x) - score(y))[0] || null, basedOn = null, signedLine = null, signedNone = false;
   // check the new loop against the brief: distance, must-pass places, doubling back, direction
   const poor = g => !g || Math.abs(g.properties.summary.distance - target)/target > .2 || viaMiss(g).some(m => m > 1500) || retraceShare(g) > .3 || (p.towards && towardsMiss(g) > 1.2);
-  if (p.existing || poor(f)) {
+  if (!kn && (p.existing || poor(f))) {
     stage(1, 'Checking signed cycle routes');
     const routes = await Promise.race([signedP, new Promise(r => setTimeout(() => r(null), p.existing ? 35000 : 20000))]);
     const cands = routes ? signedCandidates(routes, start, target, p) : [];
@@ -1038,7 +1096,7 @@ async function realRoute(p, stage){
   const total = cum[cum.length-1], distKm = Math.round(total/1000), ascent = Math.round(f.properties.ascent || 0);
   const misses = viaMiss(f), viaOut = vias.map((v, i) => ({...v, passed: misses[i] <= 1500}));
   const missed = [...unfound, ...viaOut.filter(v => !v.passed).map(v => v.name)];
-  stage(2, basedOn ? `${basedOn.km}km on ${basedOn.label}` : vias.length ? `through ${viaOut.filter(v => v.passed).map(v => v.name).join(', ') || '—'}` : `${Math.round(mainShare(f)*100)}% main roads`);
+  stage(2, kn ? `${kn.info.laps > 1 ? kn.info.laps + ' × ' : ''}${kn.info.name}` : basedOn ? `${basedOn.km}km on ${basedOn.label}` : vias.length ? `through ${viaOut.filter(v => v.passed).map(v => v.name).join(', ') || '—'}` : `${Math.round(mainShare(f)*100)}% main roads`);
   // biggest climb: largest height gain within a ~12km window, sampled every ~100m
   const smp = []; for (let i = 0, next = 0; i < line.length; i++) if (cum[i] >= next) { smp.push(i); next = cum[i] + 100; }
   let bi = 0, bj = 0, bg = 0, bs = 0;
@@ -1067,7 +1125,8 @@ async function realRoute(p, stage){
     peak: Math.round(cum[bj]/total*63), climbStartFrac: cum[bi]/total, peakFrac: cum[bj]/total,
     cafeFrac: cafe ? cafe.km*1000/total : .5, cafeKm: cafe ? cafe.km : 0, cafeName: cafe ? cafe.name : '', cafeAt: cafe ? cafe.at : line[0],
     segments: f.properties.segments[0].steps.length, summit: Math.round(ele[bj]),
-    title: basedOn ? `${basedOn.label.replace(/^a /, '')} loop` : start.gps ? 'Your loop' : `${start.name} loop`, basedOn, signedLine, signedNone,
+    known: kn ? kn.info : null,
+    title: kn ? (kn.info.kind === 'lap' && kn.info.laps > 1 ? `${kn.info.short} × ${kn.info.laps}` : kn.info.name) : basedOn ? `${basedOn.label.replace(/^a /, '')} loop` : start.gps ? 'Your loop' : `${start.name} loop`, basedOn, signedLine, signedNone,
     line, ele, climb: line.slice(bi, bj + 1), start: line[0], summitAt: line[bj],
     world: {fc:{type:'FeatureCollection', features:[]}, labels:[]}, origin: start.c, vias: viaOut, missed };
 }
@@ -1134,7 +1193,7 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   }
   if (id !== runId) return;
   if (p.customTitle) R.title = p.customTitle; else if (p.aiTitle) R.title = p.aiTitle;
-  R.req = {...p, start: R.p && R.p.start, basedOn: R.basedOn || null}; current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
+  R.req = {...p, start: R.p && R.p.start, basedOn: R.basedOn || null, knownInfo: R.known || null}; current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
   if (inPlace) { clearInterval(updTimer); bar($('#updBar'), 30); await new Promise(r => setTimeout(r, 380)); if (id !== runId) return; setUpdating(false); updateRouteInPlace(R); }
   if (R.missed && R.missed.length) setTimeout(() => toast(`Couldn’t route through ${R.missed.join(' and ')}`), R.capped ? 2400 : 0);
   if (R.capped) toast(`Free routing caps loops at ${ORS_MAX_KM}km`);
@@ -1162,6 +1221,8 @@ function chipsFor(p){
     ['dist', `${Math.min(p.dist, ORS_MAX_KM)} km`],
     ['climb', p.flatter ? 'Flatter' : p.hillier ? 'Hillier' : p.elevGiven ? `~${p.elev} m climbing` : 'Any climbing'],
     ['start', `From ${detectStartLabel(p)}`],
+    ...(p.known && libRoute(p.known.id) ? [['known', (() => { const r = libRoute(p.known.id), n = p.knownInfo && p.knownInfo.id === r.id ? p.knownInfo.laps : p.known.laps;
+      return r.kind === 'lap' ? `${n ? n + ' × ' : ''}${r.chip || r.name}${n > 1 ? 's' : ''}` : r.chip || r.name; })()]] : []),
     ...(p.via || []).map((v, i) => [`via:${i}`, `Via ${v}`]),
     ...((p.via || []).length < 3 ? [['addvia', '+ Add a stop', true]] : []),
     ...(tw ? [['towards', `Towards ${tw}`]] : []),
@@ -1175,7 +1236,7 @@ let editingReq = null;
 function renderUnderstood(p, targets){
   const asm = (p.assumptions || []).filter(a => !(p.basedOn && /^Popular way/.test(a)));   // the AI's usual way doesn't apply when a signed route is used
   const html = `<span class="mono">What I understood · tap to change</span><div class="uchips">${chipsFor(p).map(([k, label, off]) =>
-    `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.basedOn ? `<p class="assume signed-note"><span class="sdash"></span>Follows ${esc(p.basedOn.label)} for ${p.basedOn.km} km${p.basedOn.mixed && p.basedOn.unpaved > .1 ? ` · ${Math.round(p.basedOn.unpaved*100)}% unpaved paths` : ''} · signed cycle route from OpenStreetMap</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
+    `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.basedOn ? `<p class="assume signed-note"><span class="sdash"></span>Follows ${esc(p.basedOn.label)} for ${p.basedOn.km} km${p.basedOn.mixed && p.basedOn.unpaved > .1 ? ` · ${Math.round(p.basedOn.unpaved*100)}% unpaved paths` : ''} · signed cycle route from OpenStreetMap</p>` : ''}${p.knownInfo ? `<p class="assume signed-note"><span class="sdash lib"></span>${p.knownInfo.kind === 'lap' ? `${p.knownInfo.laps} × the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km each, ${p.knownInfo.direction})` : `Rides the ${esc(p.knownInfo.name)}`}${p.knownInfo.legKm ? ` · ${p.knownInfo.legKm} km there and back` : ''} · from your route library</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
   targets.forEach(sel => { const el = $(sel); el.innerHTML = html; el._req = p; });
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (!b) return;
@@ -1196,7 +1257,7 @@ function openEditor(k){
     modal('Distance', `<div class="readout"><svg id="distNum"></svg><span class="mono">km</span></div>
       <input type="range" id="distRange" min="5" max="${ORS_MAX_KM}" step="1" value="${v}" aria-label="Distance in kilometres">
       <div class="presets">${[20, 40, 60, 80, 100].map(n => `<button data-km="${n}">${n} km</button>`).join('')}</div>`,
-      [['Cancel', false], ['Update route', true, () => applyEdit({dist: v})]], 'Edit');
+      [['Cancel', false], ['Update route', true, () => applyEdit(p.known ? {dist: v, known: {...p.known, laps: null}} : {dist: v})]], 'Edit');
     const upd = n => { v = +n; $('#distRange').value = v; dotNum($('#distNum'), String(v), .1); };
     upd(v); $('#distRange').addEventListener('input', e => upd(e.target.value));
     $$('#modalBody [data-km]').forEach(b => b.addEventListener('click', () => upd(b.dataset.km)));
@@ -1225,6 +1286,16 @@ function openEditor(k){
     modal('Heading towards', `<p>The loop leans towards ${detectTowardsLabel(p)}. Loops can’t be aimed exactly, so this picks the option that gets closest.</p>` +
       optRows([['keep',`Keep ${detectTowardsLabel(p)}`,''],['none','No destination','Any direction']], 'keep'), [['Cancel', false]], 'Edit');
     bindOpts(v => v === 'none' ? applyEdit({noTowards:true, towardsPlace:null, suggestedVia:[], assumptions:(p.assumptions || []).filter(a => !/^Popular way/.test(a))}) : close());
+  } else if (k === 'known') {
+    const r = libRoute(p.known.id), n = (p.knownInfo && p.knownInfo.laps) || p.known.laps || 1;
+    const others = LIB.routes.filter(x => x.id !== r.id && x.kind === r.kind && hav(x.line[0], r.line[0]) < 15000);
+    if (r.kind === 'lap') {
+      modal(r.name, `<p>${esc(r.desc)} ${r.km} km a lap. ${esc(r.notes || '')}</p>` +
+        `<div class="presets">${[1,2,3,4,5,6,8,10].map(x => `<button data-laps="${x}"${x === n ? ' class="sel"' : ''}>${x} ${x === 1 ? 'lap' : 'laps'}</button>`).join('')}</div>` +
+        optRows([...others.map(x => [x.id, `Switch to the ${x.name}`, `${x.km} km a lap`]), ['__new', 'Plan a new loop instead', 'Any roads that fit']], ''), [['Cancel', false]], 'Edit');
+      $$('#modalBody [data-laps]').forEach(b => b.addEventListener('click', () => applyEdit({known: {id: r.id, laps: +b.dataset.laps}})));
+    } else modal(r.name, `<p>${esc(r.desc)}</p>` + optRows([['__new', 'Plan a new loop instead', 'Any roads that fit']], ''), [['Cancel', false]], 'Edit');
+    bindOpts(v => v === '__new' ? applyEdit({known: null, knownInfo: null}) : applyEdit({known: {id: v, laps: n}}));
   } else if (k === 'signed') {
     modal('Signed route', `<p>The loop is built along a signed cycle route${p.routeRef ? `, ${esc(p.routeRef)},` : ', like the National Cycle Network,'} using OpenStreetMap.</p>` +
       optRows([['keep','Keep the signed route',''],['new','Plan a new loop','Any roads that fit']], 'keep'), [['Cancel', false]], 'Edit');

@@ -57,10 +57,19 @@ const BRIEF_TOOL = {
       cafe_stop: { type: 'boolean', description: 'True if they want a café, coffee or cake stop. False if they say no stops, or nothing about stopping on a short ride.' },
       existing_route: { type: 'boolean', description: 'True if the rider wants to follow an existing, signed or established cycle route rather than a newly planned loop: e.g. "a National Cycle Route", "follow NCN 4", "the Avenue Verte", "a proper signposted route", "an existing route".' },
       route_name: { type: ['string', 'null'], description: 'The specific signed route they named, if any, written as "NCN 4" for National Cycle Network numbers or its name otherwise ("Avenue Verte", "Downs Link", "EuroVelo 2"). Null unless the rider named one: never choose a route for them.' },
+      known_route: {
+        type: ['object', 'null'],
+        description: 'Pick a route from the "Known routes" list when the rider asks for it or clearly describes it (e.g. "3 laps of Richmond Park" → the Richmond Park lap with laps 3). Null when none fits or none is listed. Never invent an id.',
+        properties: {
+          id: { type: 'string', description: 'The id from the Known routes list.' },
+          laps: { type: ['integer', 'null'], description: 'How many times to ride a lap route, if the rider said ("3 laps", "a couple of laps" → 2). Null if they gave a distance or time instead, or didn\'t say.' },
+        },
+        required: ['id', 'laps'],
+      },
       title: { type: 'string', description: 'A short route name, 2–4 words, Title case, e.g. "Surrey Hills Loop", "Flat Coffee Spin".' },
       assumptions: { type: 'array', items: { type: 'string' }, description: 'Up to 3 guesses you made that the rider might want to change, each 2–6 words, e.g. "Back by 12:00", "Road pace ~25 km/h". Skip obvious ones like looping back to start.' },
     },
-    required: ['activity', 'start', 'via', 'towards', 'suggested_via', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'existing_route', 'route_name', 'title', 'assumptions'],
+    required: ['activity', 'start', 'via', 'towards', 'suggested_via', 'distance_km', 'duration_min', 'climbing', 'quiet_roads', 'cafe_stop', 'existing_route', 'route_name', 'known_route', 'title', 'assumptions'],
   },
 };
 const BRIEF_SYSTEM = `You turn a cyclist's free-text request into a precise brief for a UK route planner that builds loops (start and finish in the same place) on real roads.
@@ -68,7 +77,7 @@ Rules:
 - Always call the route_brief tool. Never reply with plain text.
 - Distances are kilometres; convert miles (1 mi = 1.609 km). Clamp distance_km to 5–100.
 - Pace for converting time to distance: road 25 km/h, gravel 18 km/h, mtb 12 km/h. Subtract 20 minutes for a café stop. Hilly routes are ~15% slower.
-- If neither distance nor time is given, pick a sensible distance from the wording ("quick spin" ~25 km, "long ride" ~80 km, otherwise ~45 km) and say so in assumptions.
+- If neither distance nor time is given, pick a sensible distance from the wording ("quick spin" ~20 km, "short"/"easy" ~25 km, "long ride" ~80 km, otherwise ~30 km) and say so in assumptions. For a known lap route with a lap count, distance_km is laps × the lap length.
 - climbing: "flat"/"easy"/"recovery" → flat; "lumpy"/"hilly"/"climbing" → hilly; a stated figure goes in target_m (use the middle of a range).
 - Places the rider wants to go through, via, past, over, round, or to visit go in via (in order). Use towards only for a vague direction or big region. A named start place is never also a via place.
 - A climb or hill named as something to ride ("up Box Hill", "do Leith Hill") goes in via.
@@ -76,6 +85,7 @@ Rules:
 - suggested_via: when the rider gives a direction or area ("into Surrey", "out to the hills"), or asks for a classic/popular/scenic ride, suggest the waypoints a local rider would use from the start location, so the outward leg is roughly 35–45% of the loop. Prefer cycle-friendly ways (parks open to bikes, quiet lanes, well-known climbs). If you don't know the area well, leave it empty.
 - If a refinement is given with a previous brief, return the full updated brief: change only what the refinement asks for, keep everything else (including via, unless asked to change it).
 - existing_route is only for riders who ask to follow an existing or signed route; don't set it just because a route would be nice.
+- Known routes: prefer one from the list whenever the request matches it; the planner then rides that exact line (adding the ride there and back). For laps, don't also put the park in via.
 - Keep place names as the rider wrote them, cleaned up (capitalised, no "the" unless part of the name).`;
 
 async function understand(env, body) {
@@ -85,6 +95,9 @@ async function understand(env, body) {
   const lines = [`Current local time: ${String(ctx.now || '').slice(0, 40) || 'unknown'}.`];
   const sl = ctx.start || {};
   if (Number.isFinite(Number(sl.lat)) && Number.isFinite(Number(sl.lon))) lines.push(`Rider's current location (GPS, approx.): ${Number(sl.lat).toFixed(2)}, ${Number(sl.lon).toFixed(2)}.`);
+  // the app sends its library of known routes and laps so the AI can pick one by id
+  const lib = Array.isArray(body.library) ? body.library.slice(0, 60) : [];
+  if (lib.length) lines.push('Known routes:', ...lib.map(r => `- id ${String(r.id).slice(0, 40)}: ${String(r.name).slice(0, 60)}, ${Number(r.km) || '?'} km${r.kind === 'lap' ? ' per lap' : ''}. ${String(r.desc || '').slice(0, 200)} Also called: ${(Array.isArray(r.aliases) ? r.aliases : []).slice(0, 8).map(a => String(a).slice(0, 40)).join(', ')}.`));
   if (body.previous) lines.push(`Previous brief: ${JSON.stringify(body.previous).slice(0, 2000)}`, `Refinement: ${text}`);
   else lines.push(`Request: ${text}`);
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -92,7 +105,7 @@ async function understand(env, body) {
     headers: { 'x-api-key': env.ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({
       model: env.AI_MODEL || 'claude-haiku-5-5',
-      max_tokens: 600,
+      max_tokens: 700,
       system: BRIEF_SYSTEM,
       tools: [BRIEF_TOOL],
       tool_choice: { type: 'tool', name: 'route_brief' },
