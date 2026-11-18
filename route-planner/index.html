@@ -355,7 +355,7 @@ function rng(seed){let a=seed||1;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imu
 
 /* ---------- Places (approximate real coordinates) ---------- */
 const AREAS = {
-  surrey:{name:'Surrey',c:[-0.331,51.2325]}, 'box hill':{name:'Box Hill',c:[-0.31,51.252]}, kent:{name:'Kent',c:[0.19,51.272]},
+  surrey:{name:'Surrey',c:[-0.331,51.2325]}, 'surrey hills':{name:'Surrey Hills',c:[-0.42,51.21]}, 'box hill':{name:'Box Hill',c:[-0.31,51.252]}, kent:{name:'Kent',c:[0.19,51.272]},
   sussex:{name:'Sussex',c:[0.009,50.873]}, chilterns:{name:'Chilterns',c:[-0.742,51.763]}, cotswolds:{name:'Cotswolds',c:[-1.724,51.93]},
   'peak district':{name:'Peak District',c:[-1.677,53.214]}, yorkshire:{name:'Yorkshire',c:[-1.541,53.993]}, richmond:{name:'Richmond',c:[-0.30,51.461]},
   guildford:{name:'Guildford',c:[-0.570,51.236]}, dorking:{name:'Dorking',c:[-0.331,51.2325]}, essex:{name:'Essex',c:[0.47,51.73]},
@@ -841,9 +841,13 @@ async function geocode(place, near, radius){
 }
 async function resolveStart(p){
   const t = p.text.toLowerCase(), keys = Object.keys(AREAS).sort((a,b)=>b.length-a.length);
-  p.towards = null;   // direction words ("into Surrey") no longer pull the route towards a point; the AI's popular-way suggestions guide it instead
+  // direction words ("into Surrey", "towards the Surrey Hills") quietly steer the loop; there's no chip for it
+  if (p.towardsPlace) { const k = keys.find(k => k === p.towardsPlace.toLowerCase().replace(/^the\s+/, '')); if (k) p.towards = AREAS[k].c; else { const g = await geocode(p.towardsPlace, p.start ? p.start.c : null, 80); if (g) p.towards = g.c; } }
   if (p.start) return p.start;                                  // refinements keep the same start
   if (p.ai && !p.startPlace) { try { const c = await getLocation(); return {c, name:'Your', gps:true}; } catch (e) { toast('Couldn’t get your location, so starting from Dorking'); return {c: AREAS.surrey.c, name: 'Dorking'}; } }
+  const towardsKey = (p.noTowards || p.towardsPlace) ? null : keys.find(k => new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
+  if (towardsKey) p.towards = AREAS[towardsKey].c;
+  else if (!p.noTowards && !p.towardsPlace) { const tp = placeFromText(p.text, TOWARDS_WORDS); if (tp) { const g = await geocode(tp); if (g) p.towards = g.c; } }
   // a start chosen from the chips
   if (p.startPlace) { const k = keys.find(k => k === p.startPlace.toLowerCase()); if (k) return {c: AREAS[k].c, name: AREAS[k].name};
     const g = await geocode(p.startPlace); if (g) return g; toast(`Couldn’t find ${p.startPlace}, so using your location`); }
