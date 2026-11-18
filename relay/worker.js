@@ -43,7 +43,7 @@ const BRIEF_TOOL = {
       via: { type: 'array', items: { type: 'string' }, description: 'Specific places the route MUST pass through, in riding order (max 3): parks, villages, hills, landmarks, cafés by name. E.g. "through Richmond Park then Kew" → ["Richmond Park", "Kew"]. Empty if none.' },
       towards: { type: ['string', 'null'], description: 'Only a loose direction or wider area to head into ("into Surrey", "out towards the coast"), not a must-pass place. Null if none or if it is already in via.' },
       suggested_via: { type: 'array', items: { type: 'string' }, description: 'Your local knowledge: up to 3 well-known cycling waypoints (parks, villages, climbs, cycle paths) that riders from this start usually use for this kind of ride, in riding order, fitting the distance. E.g. from Richmond "into Surrey" → ["Richmond Park", "Kingston upon Thames", "Esher"]. Only real places you are confident are near the start; empty if unsure. Never repeat via places.' },
-      distance_km: { type: 'number', description: 'Target loop distance in km. If only a time budget is given, convert it using the pace and stop rules. Clamp to 5–100.' },
+      distance_km: { type: 'number', description: 'Target loop distance in km. If only a time budget is given, convert it using the pace and stop rules. Clamp to 5–200.' },
       duration_min: { type: ['number', 'null'], description: 'Total time budget in minutes if the rider gave one (including "back by 12" relative to now), else null.' },
       climbing: {
         type: 'object',
@@ -75,7 +75,8 @@ const BRIEF_TOOL = {
 const BRIEF_SYSTEM = `You turn a cyclist's free-text request into a precise brief for a UK route planner that builds loops (start and finish in the same place) on real roads.
 Rules:
 - Always call the route_brief tool. Never reply with plain text.
-- Distances are kilometres; convert miles (1 mi = 1.609 km). Clamp distance_km to 5–100.
+- Distances are kilometres; convert miles (1 mi = 1.609 km). Clamp distance_km to 5–200.
+- If the rider names somewhere to ride to and back ("down to Dorking and back", "out to the Surrey Hills") without a distance, set distance_km to about 2.4 × the straight-line distance from the start to it, so the loop actually reaches it.
 - Pace for converting time to distance: road 25 km/h, gravel 18 km/h, mtb 12 km/h. Subtract 20 minutes for a café stop. Hilly routes are ~15% slower.
 - If neither distance nor time is given, pick a sensible distance from the wording ("quick spin" ~20 km, "short"/"easy" ~25 km, "long ride" ~80 km, otherwise ~30 km) and say so in assumptions. For a known lap route with a lap count, distance_km is laps × the lap length.
 - climbing: "flat"/"easy"/"recovery" → flat; "lumpy"/"hilly"/"climbing" → hilly; a stated figure goes in target_m (use the middle of a range).

@@ -644,7 +644,8 @@ const orsReq = {
     : [`${ORS}/pois`, {method:'POST', headers:{'Authorization':ORS_KEY,'Content-Type':'application/json'}, body: JSON.stringify({request:'pois', geometry:{geojson:{type:'Point', coordinates:pt}, buffer:2000}, filters:{category_ids:[564]}, limit:20})}]
 };
 const PROFILES = {Road:'cycling-road', Gravel:'cycling-regular', MTB:'cycling-mountain'};
-const ORS_MAX_KM = 100;                      // free round-trip limit
+const ORS_MAX_KM = 100;                      // openrouteservice's own limit for one-call round trips
+const MAX_KM = 200;                          // longest ride the app plans (longer loops are built from waypoints)
 /* ---------- Route library: hand-picked routes and laps (from GPX files) the AI can choose from ---------- */
 let LIB = null;
 const libP = fetch('routes-library.json').then(r => r.ok ? r.json() : null).then(j => (LIB = j && Array.isArray(j.routes) ? j : null)).catch(() => null);
@@ -754,7 +755,8 @@ function applyBrief(base, b){
   const q = {...base}; delete q.towards;
   q.brief = b; q.ai = true;
   q.type = {road:'Road', gravel:'Gravel', mtb:'MTB'}[b.activity] || q.type;
-  if (Number(b.distance_km) > 0) q.dist = Math.max(5, Math.round(Number(b.distance_km)));
+  if (Number(b.distance_km) > 0) q.dist = Math.max(5, Math.min(MAX_KM, Math.round(Number(b.distance_km))));
+  if (base.distStated && base.dist > 100 && Number(b.distance_km) === 100) q.dist = Math.min(MAX_KM, base.dist);   // older relays clamp the AI at 100 km
   const c = b.climbing || {}, pref = c.preference || 'any', tgt = Number(c.target_m) > 0 ? Math.round(Number(c.target_m)) : null;
   q.flatter = pref === 'flat'; q.hillier = pref === 'hilly';
   if (tgt) { q.elevGiven = true; q.elev = tgt; }
@@ -1102,6 +1104,25 @@ async function signedFeature(p, start, c, profile = PROFILES[p.type]){
   return {f, seg, basedOn: {label: c.label, id: c.r.id, km: Math.round(on/1000), follow: all ? on/all : 0, unpaved, mixed: profile !== PROFILES[p.type]}};
 }
 
+// Loops longer than openrouteservice's round-trip limit: a ring of points heading the way the rider asked, routed in one go
+async function ringFeatures(p, start, target){
+  const rKm = target/1000/(2*Math.PI*1.22), base = p.towards ? bearing(start.c, p.towards) : (p.seed*37) % 360, turn = p.seed % 2 ? 1 : -1;
+  const build = async (brg, r) => {
+    const centre = destPoint(start.c, brg, r), back = (brg + 180) % 360;
+    const pts = [1, 2, 3, 4].map(i => destPoint(centre, back + turn*i*72, r));
+    const f = (await orsFetch(...orsReq.directions(PROFILES[p.type], {coordinates: [start.c, ...pts, start.c], elevation:true, extra_info:['surface','waytype'], instructions:true,
+      radiuses: [5000, 3000, 3000, 3000, 3000, 5000]}))).features[0];
+    f._ring = {brg, r}; return f;
+  };
+  const settled = await Promise.allSettled([build(base, rKm), build(base + 28, rKm)]);
+  const feats = settled.filter(x => x.status === 'fulfilled').map(x => x.value);
+  if (!feats.length) throw settled[0].reason;
+  // one correction pass on the closest, scaling the ring to fit the distance
+  const best = feats.slice().sort((a, b) => Math.abs(a.properties.summary.distance - target) - Math.abs(b.properties.summary.distance - target))[0];
+  const d = best.properties.summary.distance;
+  if (Math.abs(d - target)/target > .12) { try { feats.push(await build(best._ring.brg, best._ring.r*target/d)); } catch (e) { if (e.kind === 'quota') throw e; } }
+  return feats;
+}
 async function realRoute(p, stage){
   const start = await resolveStart(p);
   const knownName = p.known && LIB && libRoute(p.known.id) ? libRoute(p.known.id).name.toLowerCase() : '';
@@ -1109,7 +1130,7 @@ async function realRoute(p, stage){
   const viaRadius = Math.max(15, Math.min(p.dist, 150)*.6);
   const resolved = await Promise.all(viaNames.map(n => resolvePlace(n, start.c, viaRadius).catch(() => null)));
   const vias = resolved.filter(Boolean), unfound = viaNames.filter((n, i) => !resolved[i]);
-  const maxKm = vias.length ? 150 : ORS_MAX_KM;
+  const maxKm = MAX_KM;
   const capped = p.dist > maxKm, targetKm = Math.min(p.dist, maxKm), target = targetKm*1000;
   const meta1 = `${targetKm}km · ${vias.length ? 'via ' + vias[0].name : start.gps ? 'from you' : start.name}`;
   stage(1, meta1);
@@ -1134,6 +1155,7 @@ async function realRoute(p, stage){
     if (kn) feats = [kn.f];
     else if (vias.length) feats = await viaFeatures(p, start, vias, target);
     else if (soft.length) { try { feats = await viaFeatures(p, start, soft, target, 3500); } catch (e) { if (e.kind === 'quota') throw e; feats = null; } }
+    if (!feats && targetKm > ORS_MAX_KM) feats = await ringFeatures(p, start, target);   // too long for a one-call round trip
     if (!feats) {
       const base = p.seed % 90, seeds = [base, (base + 37) % 90];
       const req = seed => orsFetch(...orsReq.directions(PROFILES[p.type], {coordinates:[start.c], elevation:true, extra_info:['surface','waytype'], instructions:true, radiuses:[5000],
@@ -1277,7 +1299,7 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   R.req = {...p, start: R.p && R.p.start, basedOn: R.basedOn || null, knownInfo: R.known || null, ...(R.known && R.p ? {dist: R.p.dist} : {})};   /* with a library route the chip shows the real distance */ current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
   if (inPlace) { clearInterval(updTimer); bar($('#updBar'), 30); await new Promise(r => setTimeout(r, 380)); if (id !== runId) return; setUpdating(false); updateRouteInPlace(R); }
   if (R.missed && R.missed.length) setTimeout(() => toast(`Couldn’t route through ${R.missed.join(' and ')}`), R.capped ? 2400 : 0);
-  if (R.capped) toast(`Free routing caps loops at ${ORS_MAX_KM}km`);
+  if (R.capped) toast(`Loops are capped at ${MAX_KM}km`);
   if (R.basedOn && !R.basedOn.asked) setTimeout(() => toast(`A new loop didn’t fit well, so this one follows ${R.basedOn.label}`), 1800);
   if (R.signedNone) setTimeout(() => toast(p.routeRef ? `Couldn’t make a loop on ${p.routeRef} from here, so this is a new loop` : 'No signed cycle route fits from here, so this is a new loop'), 1800);
 }
@@ -1299,7 +1321,7 @@ const PEN = '<svg viewBox="0 0 24 24" fill="none"><path d="M4 20h4L19 9a2.8 2.8 
 function chipsFor(p){
   const tw = detectTowardsLabel(p);
   return [
-    ['dist', `${Math.min(p.dist, ORS_MAX_KM)} km`],
+    ['dist', `${Math.min(p.dist, MAX_KM)} km`],
     ['climb', p.flatter ? 'Flatter' : p.hillier ? 'Hillier' : p.elevGiven ? `~${p.elev} m climbing` : 'Any climbing'],
     ['start', `From ${detectStartLabel(p)}`],
     ...(p.known && libRoute(p.known.id) ? [['known', (() => { const r = libRoute(p.known.id), n = p.knownInfo && p.knownInfo.id === r.id ? p.knownInfo.laps : p.known.laps;
@@ -1335,16 +1357,16 @@ function bindOpts(fn){ $$('#modalBody .opt').forEach(b => b.addEventListener('cl
 function openEditor(k){
   const p = editingReq;
   if (k === 'dist') {
-    let v = Math.min(p.dist, ORS_MAX_KM);
+    let v = Math.min(p.dist, MAX_KM);
     modal('Distance', `<div class="readout"><svg id="distNum"></svg><span class="mono">km</span></div>
-      <input type="range" id="distRange" min="5" max="${ORS_MAX_KM}" step="1" value="${v}" aria-label="Distance in kilometres">
-      <div class="presets">${[20, 40, 60, 80, 100].map(n => `<button data-km="${n}">${n} km</button>`).join('')}</div>`,
+      <input type="range" id="distRange" min="5" max="${MAX_KM}" step="1" value="${v}" aria-label="Distance in kilometres">
+      <div class="presets">${[20, 40, 60, 80, 100, 120, 160, 200].map(n => `<button data-km="${n}">${n} km</button>`).join('')}</div>`,
       [['Cancel', false], ['Update route', true, () => applyEdit(p.known ? (libRoute(p.known.id).kind === 'lap' ? {dist: v, known: {...p.known, laps: null}} : {dist: v, known: null, knownInfo: null}) : {dist: v})]], 'Edit');
     const upd = n => { v = +n; $('#distRange').value = v; dotNum($('#distNum'), String(v), .1); };
     upd(v); $('#distRange').addEventListener('input', e => upd(e.target.value));
     $$('#modalBody [data-km]').forEach(b => b.addEventListener('click', () => upd(b.dataset.km)));
   } else if (k === 'climb') {
-    const d = Math.min(p.dist, ORS_MAX_KM), cur = p.flatter ? 'flat' : p.hillier ? 'hilly' : p.elevGiven ? 'rolling' : 'any';
+    const d = Math.min(p.dist, MAX_KM), cur = p.flatter ? 'flat' : p.hillier ? 'hilly' : p.elevGiven ? 'rolling' : 'any';
     modal('Climbing', optRows([['flat','Flatter',`~${d*4} m`],['rolling','Rolling',`~${d*8} m`],['hilly','Hillier',`~${d*15} m`],['any','Any climbing','Best route']], cur), [['Cancel', false]], 'Edit');
     bindOpts(v => applyEdit(v === 'flat' ? {elevGiven:true, elev:d*4, flatter:true, hillier:false} : v === 'rolling' ? {elevGiven:true, elev:d*8, flatter:false, hillier:false}
       : v === 'hilly' ? {elevGiven:true, elev:d*15, flatter:false, hillier:true} : {elevGiven:false, flatter:false, hillier:false}));
