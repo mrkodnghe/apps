@@ -759,7 +759,10 @@ function applyBrief(base, b){
     const hit = LIB.routes.find(r => r.kind === 'climb' && q.via.some(v => { const x = v.toLowerCase(); return x === r.short.toLowerCase() || x === r.name.toLowerCase() || r.aliases.includes(x); }));
     if (hit) q.known = {id: hit.id, laps: null};
   }
-  if (q.known) { const nm = libRoute(q.known.id).name.toLowerCase(); q.via = q.via.filter(v => !nm.includes(v.toLowerCase())); }   // the park is already the route
+  if (q.known) {   // places the library route already goes through aren't extra stops, and it already has its own direction
+    const r = libRoute(q.known.id), nm = r.name.toLowerCase(), on = (r.places || []).map(x => x.toLowerCase());
+    q.via = q.via.filter(v => { const x = v.toLowerCase(); return !nm.includes(x) && !on.some(o => o.includes(x) || x.includes(o)); });
+  }
   const tw = b.towards ? String(b.towards).replace(/^(?:in)?to(?:wards)?\s+|^(?:out\s+)?(?:to|towards|into)\s+/i, '').replace(/^the\s+/i, '').trim() : '';
   if (tw && !q.via.some(v => v.toLowerCase() === tw.toLowerCase())) { q.towardsPlace = tw; q.noTowards = false; } else { q.towardsPlace = null; q.noTowards = true; }
   const taken = new Set([startName, ...q.via.map(v => v.toLowerCase())]);
@@ -769,6 +772,7 @@ function applyBrief(base, b){
     .map(x => { x = x.replace(/\s*\(.*?\)/g, '').replace(/[.;]$/, '').trim(); if (x.length <= 44) return x; const cut = x.slice(0, 44); return cut.slice(0, cut.lastIndexOf(' ')) + '…'; })
     .slice(0, 3) : [];
   if (q.suggestedVia.length) q.assumptions = [`Popular way via ${q.suggestedVia.slice(0, 2).join(' & ')}${q.suggestedVia.length > 2 ? '…' : ''}`, ...q.assumptions].slice(0, 3);
+  if (q.known && libRoute(q.known.id).kind === 'loop') { q.towardsPlace = null; q.noTowards = true; q.suggestedVia = []; q.assumptions = q.assumptions.filter(a => !/^Popular way/.test(a)); }   // a whole library ride already has its own direction
   return q;
 }
 class RouteError extends Error { constructor(msg, kind){ super(msg); this.kind = kind; } }
