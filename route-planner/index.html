@@ -748,6 +748,10 @@ function applyBrief(base, b){
   } else if (!(base.start && base.start.gps)) { delete q.start; q.startGPS = true; q.startPlace = null; }
   const startName = (st.type === 'place' && st.place || '').toLowerCase();
   q.via = (Array.isArray(b.via) ? b.via : (base.via || [])).map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== startName).slice(0, 3);   // older relays don't send via: keep the keyword guess
+  if (!q.known && LIB) {   // a library climb named as a place to pass ("up Box Hill and Leith Hill"): ride the library climb, visit the rest on the way home
+    const hit = LIB.routes.find(r => r.kind === 'climb' && q.via.some(v => { const x = v.toLowerCase(); return x === r.short.toLowerCase() || x === r.name.toLowerCase() || r.aliases.includes(x); }));
+    if (hit) q.known = {id: hit.id, laps: null};
+  }
   if (q.known) { const nm = libRoute(q.known.id).name.toLowerCase(); q.via = q.via.filter(v => !nm.includes(v.toLowerCase())); }   // the park is already the route
   const tw = b.towards ? String(b.towards).replace(/^(?:in)?to(?:wards)?\s+|^(?:out\s+)?(?:to|towards|into)\s+/i, '').replace(/^the\s+/i, '').trim() : '';
   if (tw && !q.via.some(v => v.toLowerCase() === tw.toLowerCase())) { q.towardsPlace = tw; q.noTowards = false; } else { q.towardsPlace = null; q.noTowards = true; }
