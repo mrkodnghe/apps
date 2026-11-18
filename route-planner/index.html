@@ -660,7 +660,7 @@ function preview(pts){ if (map && map.getSource('edit-preview')) map.getSource('
 function snapLine(coords){ if (map && map.getSource('edit-snap')) map.getSource('edit-snap').setData(lineFC(coords || [])); }
 // Live snapping: while a point is dragged, re-plan its stretch every ~350ms and draw the real roads it would take
 const snap = {seq: 0, at: 0, timer: null, last: null, got: null};
-const SNAP_MS = 350;
+const SNAP_MS = 800, SNAP_PAUSE_MS = 250, SNAP_MIN_PX = 28;   // at most ~1 request a second while moving, plus one when the finger pauses
 function snapReq(pts){
   const {R} = edit;
   return orsFetch(...orsReq.directions(PROFILES[R.p.type], {coordinates: pts, elevation: true, extra_info: ['surface', 'waytype'], instructions: true,
@@ -672,12 +672,14 @@ function liveSnap(pts){
   if (map.getSource('edit-preview')) map.getSource('edit-preview').setData(lineFC(snap.got ? [] : pts));   // a straight dashed guide until the first roads arrive
   clearTimeout(snap.timer);
   const fire = () => {
-    if (snap.last && hav(snap.last, mid) < 12) return;   // hasn't really moved
+    if (snap.last) { const a = map.project(snap.last), b = map.project(mid); if (Math.hypot(a.x - b.x, a.y - b.y) < SNAP_MIN_PX) return; }   // hasn't moved far enough on screen
     snap.at = performance.now(); snap.last = mid; const my = ++snap.seq;
     snapReq(pts).then(f => { if (my !== snap.seq || !edit) return; snap.got = {mid, pts, f}; snapLine(f.geometry.coordinates.map(c => [c[0], c[1]])); })
       .catch(e => { if (e.kind === 'quota') toast('Daily routing limit reached, so the route can’t be changed'); });
   };
-  if (performance.now() - snap.at >= SNAP_MS) fire(); else snap.timer = setTimeout(fire, SNAP_MS - (performance.now() - snap.at));
+  // while moving: one request per SNAP_MS; when the finger pauses: one more for where it stopped
+  const since = performance.now() - snap.at;
+  if (since >= SNAP_MS) fire(); else snap.timer = setTimeout(fire, Math.min(SNAP_PAUSE_MS, SNAP_MS - since));   // each move resets this, so it only fires once the finger pauses
 }
 function endSnap(){ clearTimeout(snap.timer); snap.seq++; const got = snap.got; snap.got = null; snap.last = null; snap.at = 0; return got; }
 // the dropped point's own snapped result, if the last one is for (nearly) the same place
