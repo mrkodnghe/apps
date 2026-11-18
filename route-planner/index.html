@@ -139,6 +139,13 @@ button{background:none;border:0;cursor:pointer}
 .map::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;background-image:radial-gradient(rgba(242,242,242,.10) 1px,transparent 1.2px);background-size:18px 18px;mix-blend-mode:screen}
 .map-msg{position:absolute;inset:0;display:grid;place-items:center;color:rgba(17,17,17,.55);font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;text-align:center;padding:24px}
 .attrib{position:absolute;right:14px;bottom:calc(var(--sv,50%) + 10px);transition:bottom .35s cubic-bezier(.2,.8,.2,1);z-index:2;font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:rgba(17,17,17,.5);text-transform:uppercase;pointer-events:none}
+.mk-edit{width:18px;height:18px;border-radius:50%;background:#fff;border:3px solid #111;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:grab;touch-action:none}
+.mk-edit::after{content:'';position:absolute;inset:-13px;border-radius:50%}
+.mk-edit.ghost{background:#111;border-color:#fff;width:22px;height:22px;pointer-events:none}
+.map.editing .mk-edit{opacity:.5}
+.map-undo{position:absolute;left:14px;bottom:calc(var(--sv,50%) + 8px);transition:bottom .35s cubic-bezier(.2,.8,.2,1);z-index:2;display:flex;align-items:center;gap:6px;min-height:44px;padding:0 16px 0 12px;border-radius:999px;border:0;background:#111;color:#F2F2F2;font-family:var(--mono);font-size:12px;letter-spacing:.04em;text-transform:uppercase;box-shadow:0 2px 10px rgba(0,0,0,.3)}
+.map-undo svg{width:18px;height:18px}
+.map-undo[hidden]{display:none}
 .map-top{position:absolute;left:32px;right:32px;top:calc(var(--safe-t) + 24px);display:flex;align-items:center;justify-content:space-between;z-index:3;pointer-events:none}
 .map-top > *{pointer-events:auto}
 .map-top .icon-btn,.title-chip{background:rgba(0,0,0,.5)}
@@ -293,7 +300,7 @@ button{background:none;border:0;cursor:pointer}
 
   <!-- ================= ROUTE ================= -->
   <section class="screen" id="route" aria-label="Route details">
-    <div class="map" id="mapWrap"><div id="map" style="position:absolute;inset:0"></div><div class="map-dim"></div><span class="attrib" id="attrib"></span></div>
+    <div class="map" id="mapWrap"><div id="map" style="position:absolute;inset:0"></div><div class="map-dim"></div><span class="attrib" id="attrib"></span><button class="map-undo" id="mapUndo" hidden aria-label="Undo the last map edit"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 14 4 9l5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Undo</button></div>
     <div class="updating-veil" role="status" aria-live="polite"><div class="uv-in"><div class="dotbar" id="updBar"></div><p class="uv-label" id="updatingText">Updating route</p></div></div>
     <div class="map-top">
       <button class="icon-btn" id="backBtn" aria-label="Back to start"><svg viewBox="0 0 24 24" fill="none"><path d="m15 18-6-6 6-6" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -557,6 +564,11 @@ function ensureMap(){
       map.addLayer({id:'route-casing', type:'line', source:'route', paint:{'line-color':'#FFFFFF','line-opacity':.95,'line-width':W(8,6,15,14)}, layout:L});
       map.addLayer({id:'route-line', type:'line', source:'route', paint:{'line-color':'#111111','line-width':W(8,3,15,7)}, layout:L});
       map.addLayer({id:'climb-line', type:'line', source:'climb', paint:{'line-color':'#E5262C','line-width':W(8,3,15,7),'line-opacity':0}, layout:L});
+      // map editing: a wide invisible line to press on, and a dashed preview while dragging
+      map.addSource('edit-preview', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
+      map.addLayer({id:'edit-preview', type:'line', source:'edit-preview', paint:{'line-color':'#111111','line-width':3,'line-dasharray':[1.5,1.5],'line-opacity':.7}, layout:L});
+      map.addLayer({id:'route-hit', type:'line', source:'route', paint:{'line-color':'#000000','line-opacity':0,'line-width':30}, layout:L});
+      registerEditing(map);
       resolve(map);
     });
     window.addEventListener('resize', () => map && map.resize());
@@ -568,7 +580,7 @@ function el(cls, html=''){ const d = document.createElement('div'); d.className 
 async function renderMap(R){
   const m = await ensureMap(); if (!m) return;
   m.resize();
-  markers.forEach(mk => mk.remove()); markers = [];
+  markers.forEach(mk => mk.remove()); markers = []; routeMarkers.forEach(mk => mk.remove()); routeMarkers = []; clearHandles(); preview(null); $('#mapUndo').hidden = true;
   if (!live) m.getSource('world').setData(R.world.fc);
   m.getSource('climb').setData(lineFC([])); m.setPaintProperty('climb-line','line-opacity',0);
   if (m.getSource('signed')) m.getSource('signed').setData(lineFC(R.signedLine || []));
@@ -582,9 +594,14 @@ async function renderMap(R){
     m.getSource('route').setData(lineFC(R.line.slice(0, k)));
     if (t < 1) requestAnimationFrame(step); else finish(); };
   requestAnimationFrame(step);
-  function finish(){
+  function finish(){ placeMarkers(m, R); setupEditing(R); }
+}
+
+let routeMarkers = [];
+function placeMarkers(m, R){
+  routeMarkers.forEach(mk => mk.remove()); routeMarkers = [];
     m.getSource('climb').setData(lineFC(R.climb)); m.setPaintProperty('climb-line','line-opacity',1);
-    const add = (node, ll, opts={}) => markers.push(new maplibregl.Marker({element:node, ...opts}).setLngLat(ll).addTo(m));
+    const add = (node, ll, opts={}) => routeMarkers.push(new maplibregl.Marker({element:node, ...opts}).setLngLat(ll).addTo(m));
     const w = m.getContainer().clientWidth, onLeft = ll => m.project(ll).x < w/2;
     if (R.p.cafe) { add(el('mk mk-cafe fade-in'), R.cafeAt); const l = onLeft(R.cafeAt);
       add(el('tag fade-in', `Café · km ${R.cafeKm}`), R.cafeAt, {anchor: l ? 'left' : 'right', offset: l ? [14,-16] : [-14,-16]}); }
@@ -595,7 +612,132 @@ async function renderMap(R){
     add(el('mk mk-start fade-in'), R.start); const sl = onLeft(R.start);
     add(el('tag fade-in', 'Start · Finish'), R.start, {anchor: sl ? 'top-left' : 'top-right', offset: sl ? [6,14] : [-6,14]});
   }
+
+/* ---------- Map editing: hold the line to pull it, drag or tap its points, undo (like Komoot) ---------- */
+// The route is kept as points it must pass (edit.ctrl, indexes into R.line); each edit re-plans only the stretches either side.
+let edit = null;
+const EDIT_HOLD_MS = 320;
+function surfPerPoint(f, n){
+  const out = new Array(n).fill(3), v = f && f.properties && f.properties.extras && f.properties.extras.surface && f.properties.extras.surface.values;
+  if (v) v.forEach(([a, b, val]) => { for (let i = a; i <= b && i < n; i++) out[i] = val; });
+  return out;
 }
+function cumOf(line){ const c = [0]; for (let i = 1; i < line.length; i++) c.push(c[i-1] + hav(line[i-1], line[i])); return c; }
+function setupEditing(R){
+  if (!R || !R.real || !R.surf || !$('#route').classList.contains('active')) { clearHandles(); return; }
+  if (!edit || edit.R !== R) {
+    const cum = cumOf(R.line), total = cum[cum.length-1], n = Math.max(4, Math.min(12, Math.round(total/8000)));
+    const ctrl = [0]; for (let k = 1; k < n; k++) { const d = total*k/n; let i = ctrl[ctrl.length-1]; while (i < cum.length - 1 && cum[i] < d) i++; if (i > ctrl[ctrl.length-1]) ctrl.push(i); }
+    ctrl.push(R.line.length - 1);
+    edit = {R, ctrl, undo: [], busy: false, handles: []};
+    hintOnce();
+  }
+  drawHandles();
+  $('#mapUndo').hidden = !edit.undo.length;
+}
+function clearHandles(){ if (edit) { edit.handles.forEach(h => h.remove()); edit.handles = []; } }
+function drawHandles(){
+  clearHandles(); if (!edit || !map) return;
+  const {R, ctrl} = edit;
+  for (let k = 1; k < ctrl.length - 1; k++) {
+    const node = el('mk-edit'); node.setAttribute('role', 'button'); node.setAttribute('aria-label', `Route point ${k}: drag to move, tap to remove`);
+    const mk = new maplibregl.Marker({element: node, draggable: true}).setLngLat(R.line[ctrl[k]]).addTo(map);
+    let moved = false;
+    mk.on('dragstart', () => { moved = true; });
+    mk.on('drag', () => preview([R.line[ctrl[k-1]], mk.getLngLat().toArray(), R.line[ctrl[k+1]]]));
+    mk.on('dragend', () => { const ll = mk.getLngLat().toArray(); setTimeout(() => { moved = false; }, 0); applyMapEdit(k - 1, k + 1, [R.line[ctrl[k-1]], ll, R.line[ctrl[k+1]]], 'Moved a point'); });
+    node.addEventListener('click', e => { e.stopPropagation(); if (moved || edit.busy) return;
+      modal('Route point', '<p>Remove this point? The route closes up around it.</p>', [['Cancel', false], ['Remove point', true, () => { close(); applyMapEdit(k - 1, k + 1, [R.line[ctrl[k-1]], R.line[ctrl[k+1]]], 'Removed a point'); }]], 'Edit'); });
+    edit.handles.push(mk);
+  }
+}
+function preview(pts){ if (map && map.getSource('edit-preview')) map.getSource('edit-preview').setData(lineFC(pts || [])); }
+function segmentAt(ll){
+  const {R, ctrl} = edit; let bi = 0, bd = 1e12;
+  R.line.forEach((pt, i) => { const d = hav(pt, ll); if (d < bd) { bd = d; bi = i; } });
+  let k = 0; while (k < ctrl.length - 2 && ctrl[k+1] <= bi) k++;
+  return k;
+}
+function registerEditing(m){
+  const begin = (e, touch) => {
+    if (!edit || edit.busy || !$('#route').classList.contains('active') || (touch && e.points && e.points.length > 1)) return;
+    const p0 = e.point; let dragging = false, timer = null, ghost = null, k = 0, last = e.lngLat.toArray();
+    const startDrag = () => { dragging = true; m.dragPan.disable(); if (navigator.vibrate) navigator.vibrate(8);
+      k = segmentAt(last); ghost = new maplibregl.Marker({element: el('mk-edit ghost')}).setLngLat(last).addTo(m);
+      preview([edit.R.line[edit.ctrl[k]], last, edit.R.line[edit.ctrl[k+1]]]); };
+    const move = ev => { last = ev.lngLat.toArray();
+      if (dragging) { ghost.setLngLat(last); preview([edit.R.line[edit.ctrl[k]], last, edit.R.line[edit.ctrl[k+1]]]); }
+      else if (Math.hypot(ev.point.x - p0.x, ev.point.y - p0.y) > 10) finish(false); };   // the finger moved first: it's a pan, not an edit
+    const finish = (commit = true) => { clearTimeout(timer); m.off(touch ? 'touchmove' : 'mousemove', move); m.off(touch ? 'touchend' : 'mouseup', up); m.off('touchcancel', cancel);
+      if (!dragging) return; m.dragPan.enable(); if (ghost) ghost.remove();
+      if (commit) applyMapEdit(k, k + 1, [edit.R.line[edit.ctrl[k]], last, edit.R.line[edit.ctrl[k+1]]], 'Reshaped the route'); else preview(null); };
+    const up = () => finish(true), cancel = () => finish(false);
+    m.on(touch ? 'touchmove' : 'mousemove', move); m.on(touch ? 'touchend' : 'mouseup', up); m.on('touchcancel', cancel);
+    if (touch) timer = setTimeout(startDrag, EDIT_HOLD_MS); else { e.preventDefault(); startDrag(); }
+  };
+  m.on('mousedown', 'route-hit', e => begin(e, false));
+  m.on('touchstart', 'route-hit', e => begin(e, true));
+  m.on('mouseenter', 'route-hit', () => { if (edit && $('#route').classList.contains('active')) m.getCanvas().style.cursor = 'grab'; });
+  m.on('mouseleave', 'route-hit', () => { m.getCanvas().style.cursor = ''; });
+}
+// Re-plan the stretch between points `from` and `to` through `pts`, then splice it into the route
+async function applyMapEdit(from, to, pts, what){
+  if (!edit || edit.busy) return;
+  const {R} = edit; edit.busy = true; $('#mapWrap').classList.add('editing');
+  try {
+    const r = await orsFetch(...orsReq.directions(PROFILES[R.p.type], {coordinates: pts, elevation: true, extra_info: ['surface', 'waytype'], instructions: true,
+      radiuses: pts.map((_, i) => i === 0 || i === pts.length - 1 ? 300 : 1500)}));
+    const f = r.features[0], nc = f.geometry.coordinates, wp = f.properties.way_points || [0, nc.length - 1];
+    edit.undo.push({line: R.line, ele: R.ele, surf: R.surf, ctrl: edit.ctrl}); if (edit.undo.length > 20) edit.undo.shift();
+    const s0 = edit.ctrl[from], e0 = edit.ctrl[to], delta = nc.length - (e0 - s0 + 1);
+    const line = [...R.line.slice(0, s0), ...nc.map(c => [c[0], c[1]]), ...R.line.slice(e0 + 1)];
+    const ele = [...R.ele.slice(0, s0), ...nc.map(c => c[2] || 0), ...R.ele.slice(e0 + 1)];
+    const surf = [...R.surf.slice(0, s0), ...surfPerPoint(f, nc.length), ...R.surf.slice(e0 + 1)];
+    const ctrl = [...edit.ctrl.slice(0, from), ...wp.map(w => s0 + w), ...edit.ctrl.slice(to + 1).map(x => x + delta)];
+    rebuildEdited(R, line, ele, surf, ctrl, what);
+  } catch (e) {
+    toast(e.kind === 'quota' ? 'Daily routing limit reached, so the route can’t be changed' : 'Couldn’t find a road there, so the route stays as it was');
+    preview(null); drawHandles();
+  } finally { edit.busy = false; $('#mapWrap').classList.remove('editing'); }
+}
+function undoMapEdit(){
+  if (!edit || edit.busy || !edit.undo.length) return;
+  const u = edit.undo.pop(); rebuildEdited(edit.R, u.line, u.ele, u.surf, u.ctrl, null);
+  if (!edit.undo.length) { edit.R.edited = 0; edit.R.req.edited = 0; renderUnderstood(edit.R.req, ['#readyU', '#routeU']); }
+}
+// Recalculate everything the route screen shows from the edited line
+function rebuildEdited(R, line, ele, surf, ctrl, what){
+  edit.ctrl = ctrl; R.line = line; R.ele = ele; R.surf = surf;
+  const cum = cumOf(line), total = cum[cum.length-1];
+  let gain = 0, base = ele[0]; for (let i = 1; i < ele.length; i++) { if (ele[i] > base + 1) { gain += ele[i] - base; base = ele[i]; } else if (ele[i] < base - 1) base = ele[i]; }
+  const smp = []; for (let i = 0, next = 0; i < line.length; i++) if (cum[i] >= next) { smp.push(i); next = cum[i] + 100; }
+  let bi = 0, bj = 0, bg = 0, bs = 0;
+  for (let a = 0; a < smp.length; a++) for (let b = a + 1; b < smp.length && cum[smp[b]] - cum[smp[a]] < 12000; b++) {
+    const g = ele[smp[b]] - ele[smp[a]], len = cum[smp[b]] - cum[smp[a]];
+    if (g > 15 && len >= 400) { const sc = g*g/len; if (sc > bs) { bs = sc; bg = g; bi = smp[a]; bj = smp[b]; } } }
+  const lo = Math.min(...ele), hi = Math.max(...ele), range = Math.max(hi - lo, 120), prof = [];
+  for (let k = 0, i = 0; k < 64; k++) { const d = total*k/63; while (i < cum.length - 1 && cum[i+1] < d) i++; prof.push(.12 + .88*(ele[i] - lo)/range); }
+  let A = 0, P = 0, G = 0;
+  for (let i = 1; i < line.length; i++) { const d = cum[i] - cum[i-1], v = surf[i]; if (SURF.asphalt.includes(v)) A += d; else if (SURF.paved.includes(v)) P += d; else if (SURF.gravel.includes(v)) G += d; }
+  const K = A + P + G || 1;
+  R.asphalt = Math.round(A/K*100); R.gravel = Math.round(G/K*100); R.paved = 100 - R.asphalt - R.gravel;
+  R.p = {...R.p, dist: Math.round(total/1000), elev: Math.round(gain)};
+  const speed = {Road:26, Gravel:20, MTB:14}[R.p.type];
+  R.mins = Math.round(R.p.dist/speed*60 + gain*.06 + (R.p.cafe ? 20 : 0));
+  R.climbLen = +(((cum[bj] - cum[bi]) || 100)/1000).toFixed(1); R.climbGrad = Math.max(1, Math.round(bg/((cum[bj] - cum[bi]) || 1)*100));
+  R.prof = prof; R.peak = Math.round(cum[bj]/total*63); R.climbStartFrac = cum[bi]/total; R.peakFrac = cum[bj]/total;
+  R.climb = line.slice(bi, bj + 1); R.summitAt = line[bj]; R.summit = Math.round(ele[bj]); R.start = line[0];
+  if (R.p.cafe && R.cafeAt) { let ci = 0, cd = 1e12; line.forEach((pt, i) => { const d = hav(pt, R.cafeAt); if (d < cd) { cd = d; ci = i; } }); R.cafeKm = +(cum[ci]/1000).toFixed(1); R.cafeFrac = cum[ci]/total; }
+  (R.vias || []).forEach(v => { let m = 1e12; for (let i = 0; i < line.length; i += 3) m = Math.min(m, hav(line[i], v.c)); v.passed = m <= 1500; });
+  if (what) { R.edited = (R.edited || 0) + 1; R.req.edited = R.edited; renderUnderstood(R.req, ['#readyU', '#routeU']); }
+  // redraw without the draw-on animation
+  renderSheet(R); $('#genAgo').textContent = what ? 'Edited just now' : 'Undone';
+  map.getSource('route').setData(lineFC(line)); map.getSource('climb').setData(lineFC(R.climb)); preview(null);
+  placeMarkers(map, R); drawHandles();
+  $('#mapUndo').hidden = !edit.undo.length;
+}
+function hintOnce(){ try { if (localStorage.getItem('lsEditHint')) return; localStorage.setItem('lsEditHint', '1'); } catch (e) {}
+  setTimeout(() => toast('Hold the route line to reshape it, or drag a point'), 1800); }
 
 /* ---------- Sheet ---------- */
 function smoothPath(pts){ let d = `M${pts[0][0]} ${pts[0][1]}`; for (let i=1;i<pts.length;i++){ const [x0,y0]=pts[i-1],[x1,y1]=pts[i],mx=(x0+x1)/2; d += ` Q${x0} ${y0} ${mx} ${(y0+y1)/2}`; } const l=pts[pts.length-1]; return d + ` L${l[0]} ${l[1]}`; }
@@ -1230,7 +1372,7 @@ async function realRoute(p, stage){
     segments: f.properties.segments[0].steps.length, summit: Math.round(ele[bj]),
     known: kn ? kn.info : null,
     title: kn ? (kn.info.kind === 'lap' && kn.info.laps > 1 ? `${kn.info.short} × ${kn.info.laps}` : kn.info.name) : basedOn ? `${basedOn.label.replace(/^a /, '')} loop` : start.gps ? 'Your loop' : `${start.name} loop`, basedOn, signedLine, signedNone,
-    line, ele, climb: line.slice(bi, bj + 1), start: line[0], summitAt: line[bj],
+    line, ele, surf: surfPerPoint(f, line.length), climb: line.slice(bi, bj + 1), start: line[0], summitAt: line[bj],
     world: {fc:{type:'FeatureCollection', features:[]}, labels:[]}, origin: start.c, vias: viaOut, missed };
 }
 
@@ -1340,7 +1482,7 @@ function renderUnderstood(p, targets){
   const html = `<span class="mono">What I understood · tap to change</span><div class="uchips">${chipsFor(p).map(([k, label, off]) =>
     `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.basedOn ? `<p class="assume signed-note"><span class="sdash"></span>Follows ${esc(p.basedOn.label)} for ${p.basedOn.km} km${p.basedOn.mixed && p.basedOn.unpaved > .1 ? ` · ${Math.round(p.basedOn.unpaved*100)}% unpaved paths` : ''} · signed cycle route from OpenStreetMap</p>` : ''}${p.knownInfo ? `<p class="assume signed-note"><span class="sdash lib"></span>${p.knownInfo.kind === 'lap' ? `${p.knownInfo.laps} × the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km each, ${p.knownInfo.direction})${p.knownInfo.legKm ? ` · ${p.knownInfo.legKm} km there and back` : ''}`
   : p.knownInfo.kind === 'climb' ? `Up the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km at ${p.knownInfo.grade}%${p.knownInfo.quiet ? ', quiet road' : ''})${p.knownInfo.cafe ? ' · café near the top' : ''} · home a different way`
-  : `Rides the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km${p.knownInfo.quiet ? ', avoids main roads' : ''})${p.knownInfo.legKm ? ` · ${p.knownInfo.legKm} km there and back` : ''}${p.knownInfo.warn ? ` · ${esc(p.knownInfo.warn)}` : ''}`} · from your route library</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
+  : `Rides the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km${p.knownInfo.quiet ? ', avoids main roads' : ''})${p.knownInfo.legKm ? ` · ${p.knownInfo.legKm} km there and back` : ''}${p.knownInfo.warn ? ` · ${esc(p.knownInfo.warn)}` : ''}`} · from your route library</p>` : ''}${p.edited ? `<p class="assume signed-note"><span class="sdash lib"></span>Edited on the map · ${p.edited} ${p.edited === 1 ? 'change' : 'changes'}</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
   targets.forEach(sel => { const el = $(sel); el.innerHTML = html; el._req = p; });
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (!b) return;
@@ -1354,7 +1496,13 @@ function applyEdit(changes){
 }
 function optRows(list, cur, cls = 'opts'){ return `<div class="${cls}">${list.map(([v, label, sub]) => `<button class="opt${v === cur ? ' sel' : ''}" data-v="${v}">${label}${sub ? `<span>${sub}</span>` : ''}</button>`).join('')}</div>`; }
 function bindOpts(fn){ $$('#modalBody .opt').forEach(b => b.addEventListener('click', () => fn(b.dataset.v))); }
+let editOk = false;
 function openEditor(k){
+  if (current && current.edited && !editOk) {
+    modal('Re-plan the route?', '<p>Changing this re-plans the whole route and undoes your edits on the map.</p>',
+      [['Keep my edits', false], ['Re-plan', true, () => { close(); editOk = true; setTimeout(() => { openEditor(k); editOk = false; }, 60); }]], 'Edit');
+    return;
+  }
   const p = editingReq;
   if (k === 'dist') {
     let v = Math.min(p.dist, MAX_KM);
@@ -1622,8 +1770,9 @@ function close(){ $('#modal').classList.remove('open'); }
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') close(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
 if (navigator.permissions) navigator.permissions.query({name:'geolocation'}).then(st => { if (st.state === 'granted') getLocation().catch(() => {}); }).catch(() => {});
+$('#mapUndo').addEventListener('click', undoMapEdit);
 // test handle for the prototype
-window.__rp = {signedRoutesNear, signedCandidates, signedFeature, condenseRoutes, retraceShare, generate, get current(){ return current; }};
+window.__rp = {get edit(){ return edit; }, applyMapEdit, undoMapEdit, signedRoutesNear, signedCandidates, signedFeature, condenseRoutes, retraceShare, generate, get current(){ return current; }};
 })();
 </script>
 </body>
