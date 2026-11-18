@@ -135,10 +135,10 @@ button{background:none;border:0;cursor:pointer}
 
 /* ---------- Route ---------- */
 #route{padding:0}
-.map{position:absolute;inset:0;background:#0B0B0B}
+.map{position:absolute;inset:0;background:#F2F1EE}
 .map::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;background-image:radial-gradient(rgba(242,242,242,.10) 1px,transparent 1.2px);background-size:18px 18px;mix-blend-mode:screen}
-.map-msg{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;text-align:center;padding:24px}
-.attrib{position:absolute;right:14px;bottom:calc(var(--sv,50%) + 10px);transition:bottom .35s cubic-bezier(.2,.8,.2,1);z-index:2;font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:rgba(242,242,242,.4);text-transform:uppercase;pointer-events:none}
+.map-msg{position:absolute;inset:0;display:grid;place-items:center;color:rgba(17,17,17,.55);font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;text-align:center;padding:24px}
+.attrib{position:absolute;right:14px;bottom:calc(var(--sv,50%) + 10px);transition:bottom .35s cubic-bezier(.2,.8,.2,1);z-index:2;font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:rgba(17,17,17,.5);text-transform:uppercase;pointer-events:none}
 .map-top{position:absolute;left:32px;right:32px;top:calc(var(--safe-t) + 24px);display:flex;align-items:center;justify-content:space-between;z-index:3;pointer-events:none}
 .map-top > *{pointer-events:auto}
 .map-top .icon-btn,.title-chip{background:rgba(0,0,0,.5)}
@@ -181,7 +181,7 @@ button{background:none;border:0;cursor:pointer}
 /* in-place updating state on the Route screen: blur over map and sheet, dot progress in the middle (Figma 4 v4 · Route (Chip Edit)) */
 .map-dim{display:none}
 .updating-veil{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;padding:32px;
-  background:rgba(0,0,0,.01);-webkit-backdrop-filter:blur(40px);backdrop-filter:blur(40px);opacity:0;visibility:hidden;transition:opacity .35s,visibility 0s .35s}
+  background:rgba(8,8,8,.62);-webkit-backdrop-filter:blur(40px);backdrop-filter:blur(40px);   /* dark veil keeps the label readable over the light map */opacity:0;visibility:hidden;transition:opacity .35s,visibility 0s .35s}
 .uv-in{width:100%;display:flex;flex-direction:column;gap:16px}
 .uv-label{margin:0;height:14px;line-height:14px;font-family:var(--mono);font-size:12px;color:#fff;text-align:center;text-transform:uppercase;white-space:nowrap}
 #route.updating .updating-veil{opacity:1;visibility:visible;transition:opacity .35s}
@@ -492,20 +492,20 @@ function buildWorld(r, p, route, R, ctr, origin){
 }
 
 /* ---------- MapLibre ---------- */
-const LIVE_STYLE = 'https://tiles.openfreemap.org/styles/dark';   // used automatically when the page is hosted where it can reach it
+const LIVE_STYLE = 'https://tiles.openfreemap.org/styles/positron';   // light basemap; the rest of the app stays dark   // used automatically when the page is hosted where it can reach it
 const W = (z0, w0, z1, w1) => ['interpolate',['exponential',1.6],['zoom'],z0,w0,z1,w1];
 function offlineStyle(){
   return { version:8, sources:{ world:{ type:'geojson', data:{type:'FeatureCollection',features:[]} } },
     layers:[
-      {id:'bg', type:'background', paint:{'background-color':'#0B0B0B'}},
-      {id:'built', type:'fill', source:'world', filter:['==',['get','kind'],'built'], paint:{'fill-color':'#171717'}},
-      {id:'wood', type:'fill', source:'world', filter:['==',['get','kind'],'wood'], paint:{'fill-color':'#15201A','fill-opacity':.9}},
-      {id:'water', type:'fill', source:'world', filter:['==',['get','kind'],'water'], paint:{'fill-color':'#0E1A22'}},
-      {id:'river', type:'line', source:'world', filter:['==',['get','kind'],'river'], paint:{'line-color':'#0E1A22','line-width':W(8,1.5,15,10)}, layout:{'line-cap':'round','line-join':'round'}},
-      {id:'road-minor', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'minor']], paint:{'line-color':'#222222','line-width':W(9,.6,15,6)}, layout:{'line-cap':'round','line-join':'round'}},
-      {id:'road-sec', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'secondary']], paint:{'line-color':'#2C2C2C','line-width':W(8,.9,15,9)}, layout:{'line-cap':'round','line-join':'round'}},
-      {id:'road-major', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'major']], paint:{'line-color':'#363636','line-width':W(7,1.2,15,12)}, layout:{'line-cap':'round','line-join':'round'}},
-      {id:'road-mway', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'motorway']], paint:{'line-color':'#414141','line-width':W(6,1.6,15,16)}, layout:{'line-cap':'round','line-join':'round'}}
+      {id:'bg', type:'background', paint:{'background-color':'#F2F1EE'}},
+      {id:'built', type:'fill', source:'world', filter:['==',['get','kind'],'built'], paint:{'fill-color':'#E7E5E0'}},
+      {id:'wood', type:'fill', source:'world', filter:['==',['get','kind'],'wood'], paint:{'fill-color':'#DCE5D3','fill-opacity':.9}},
+      {id:'water', type:'fill', source:'world', filter:['==',['get','kind'],'water'], paint:{'fill-color':'#CADBE4'}},
+      {id:'river', type:'line', source:'world', filter:['==',['get','kind'],'river'], paint:{'line-color':'#CADBE4','line-width':W(8,1.5,15,10)}, layout:{'line-cap':'round','line-join':'round'}},
+      {id:'road-minor', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'minor']], paint:{'line-color':'#FFFFFF','line-width':W(9,.6,15,6)}, layout:{'line-cap':'round','line-join':'round'}},
+      {id:'road-sec', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'secondary']], paint:{'line-color':'#FFFFFF','line-width':W(8,.9,15,9)}, layout:{'line-cap':'round','line-join':'round'}},
+      {id:'road-major', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'major']], paint:{'line-color':'#FBFAF7','line-width':W(7,1.2,15,12)}, layout:{'line-cap':'round','line-join':'round'}},
+      {id:'road-mway', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'motorway']], paint:{'line-color':'#F3E9D2','line-width':W(6,1.6,15,16)}, layout:{'line-cap':'round','line-join':'round'}}
     ]};
 }
 let map = null, mapReady = null, live = false, markers = [], lastBounds = null;
@@ -525,10 +525,10 @@ function ensureMap(){
       map.addSource('climb', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
       map.addSource('signed', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
       const L = {'line-cap':'round','line-join':'round'};
-      map.addLayer({id:'signed-line', type:'line', source:'signed', paint:{'line-color':'#4FD17A','line-opacity':.85,'line-width':W(8,2,15,4),'line-dasharray':[1.2,1.6],'line-offset':W(8,4,15,10)}, layout:{'line-join':'round'}});
-      map.addLayer({id:'route-glow', type:'line', source:'route', paint:{'line-color':'#ffffff','line-opacity':.16,'line-width':W(8,8,15,22),'line-blur':6}, layout:L});
-      map.addLayer({id:'route-casing', type:'line', source:'route', paint:{'line-color':'#000000','line-opacity':.75,'line-width':W(8,6,15,14)}, layout:L});
-      map.addLayer({id:'route-line', type:'line', source:'route', paint:{'line-color':'#F2F2F2','line-width':W(8,3,15,7)}, layout:L});
+      map.addLayer({id:'signed-line', type:'line', source:'signed', paint:{'line-color':'#14964A','line-opacity':.9,'line-width':W(8,2,15,4),'line-dasharray':[1.2,1.6],'line-offset':W(8,4,15,10)}, layout:{'line-join':'round'}});
+      map.addLayer({id:'route-glow', type:'line', source:'route', paint:{'line-color':'#000000','line-opacity':.12,'line-width':W(8,8,15,22),'line-blur':6}, layout:L});
+      map.addLayer({id:'route-casing', type:'line', source:'route', paint:{'line-color':'#FFFFFF','line-opacity':.95,'line-width':W(8,6,15,14)}, layout:L});
+      map.addLayer({id:'route-line', type:'line', source:'route', paint:{'line-color':'#111111','line-width':W(8,3,15,7)}, layout:L});
       map.addLayer({id:'climb-line', type:'line', source:'climb', paint:{'line-color':'#E5262C','line-width':W(8,3,15,7),'line-opacity':0}, layout:L});
       resolve(map);
     });
@@ -1373,7 +1373,7 @@ function setUpdating(on){
   if (on) bar($('#updBar'), 1); else clearInterval(updTimer);
   if (map && map.getLayer && map.getLayer('route-line')) {
     map.setPaintProperty('route-line', 'line-opacity', on ? .35 : 1);
-    map.setPaintProperty('route-glow', 'line-opacity', on ? 0 : .16);
+    map.setPaintProperty('route-glow', 'line-opacity', on ? 0 : .12);
     if (on) map.setPaintProperty('climb-line', 'line-opacity', .35);
   }
 }
