@@ -691,7 +691,6 @@ function openTip(k, ll){
   btn.addEventListener('click', e => { e.stopPropagation(); closeTip(); const {R, ctrl} = edit; applyMapEdit(k - 1, k + 1, [R.line[ctrl[k-1]], R.line[ctrl[k+1]]], 'Removed a point'); });
   node.appendChild(btn);
   editTip = new maplibregl.Marker({element: node, anchor: 'bottom', offset: [0, -16]}).setLngLat(ll).addTo(map);
-  btn.focus();
 }
 function segmentAt(ll){
   const {R, ctrl} = edit; let bi = 0, bd = 1e12;
