@@ -683,7 +683,8 @@ function liveSnap(pts){
 }
 function endSnap(){ clearTimeout(snap.timer); snap.seq++; const got = snap.got; snap.got = null; snap.last = null; snap.at = 0; return got; }
 // the dropped point's own snapped result, if the last one is for (nearly) the same place
-function snappedFor(pts){ const got = endSnap(); return got && got.pts.length === pts.length && hav(got.mid, pts[1]) < 15 ? got.f : null; }
+function snappedFor(pts){ const got = endSnap(); if (!got || got.pts.length !== pts.length) return null;
+  const a = map.project(got.mid), b = map.project(pts[1]); return Math.hypot(a.x - b.x, a.y - b.y) < SNAP_MIN_PX ? got.f : null; }   // close enough on screen: keep the roads already shown
 let editTip = null;
 function closeTip(){ if (editTip) { editTip.remove(); editTip = null; } }
 function openTip(k, ll){
