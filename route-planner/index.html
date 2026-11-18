@@ -702,20 +702,22 @@ function segmentAt(ll){
 function registerEditing(m){
   const begin = (e, touch) => {
     if (!edit || edit.busy || !$('#route').classList.contains('active') || (touch && e.points && e.points.length > 1)) return;
+    const tgt = e.originalEvent && e.originalEvent.target; if (tgt && tgt.closest && tgt.closest('.mk-edit, .edit-tip, .mk, .tag')) return;   // pressing a point is not pulling the line
     const p0 = e.point; let dragging = false, timer = null, ghost = null, k = 0, last = e.lngLat.toArray();
     const startDrag = () => { dragging = true; m.dragPan.disable(); if (navigator.vibrate) navigator.vibrate(8);
       k = segmentAt(last); ghost = new maplibregl.Marker({element: el('mk-edit ghost')}).setLngLat(last).addTo(m); closeTip(); endSnap();
       liveSnap([edit.R.line[edit.ctrl[k]], last, edit.R.line[edit.ctrl[k+1]]]); };
     const move = ev => { last = ev.lngLat.toArray();
       if (dragging) { ghost.setLngLat(last); liveSnap([edit.R.line[edit.ctrl[k]], last, edit.R.line[edit.ctrl[k+1]]]); }
-      else if (Math.hypot(ev.point.x - p0.x, ev.point.y - p0.y) > 10) finish(false); };   // the finger moved first: it's a pan, not an edit
+      else if (!touch && Math.hypot(ev.point.x - p0.x, ev.point.y - p0.y) > 4) { startDrag(); ghost.setLngLat(last); liveSnap([edit.R.line[edit.ctrl[k]], last, edit.R.line[edit.ctrl[k+1]]]); }   // mouse: a real pull, not a click
+      else if (touch && Math.hypot(ev.point.x - p0.x, ev.point.y - p0.y) > 10) finish(false); };   // the finger moved first: it's a pan, not an edit
     const finish = (commit = true) => { clearTimeout(timer); m.off(touch ? 'touchmove' : 'mousemove', move); m.off(touch ? 'touchend' : 'mouseup', up); m.off('touchcancel', cancel);
       if (!dragging) return; m.dragPan.enable(); if (ghost) ghost.remove();
       const pts = [edit.R.line[edit.ctrl[k]], last, edit.R.line[edit.ctrl[k+1]]];
       if (commit) applyMapEdit(k, k + 1, pts, 'Reshaped the route', snappedFor(pts)); else { endSnap(); preview(null); } };
     const up = () => finish(true), cancel = () => finish(false);
     m.on(touch ? 'touchmove' : 'mousemove', move); m.on(touch ? 'touchend' : 'mouseup', up); m.on('touchcancel', cancel);
-    if (touch) timer = setTimeout(startDrag, EDIT_HOLD_MS); else { e.preventDefault(); startDrag(); }
+    if (touch) timer = setTimeout(startDrag, EDIT_HOLD_MS); else e.preventDefault();   // mouse: hold the map still and start once it moves
   };
   m.on('click', e => { const t = e.originalEvent && e.originalEvent.target; if (t && t.closest && t.closest('.mk-edit, .edit-tip')) return; closeTip(); });   // a tap on a point opens its tooltip; anywhere else closes it
   m.on('mousedown', 'route-hit', e => begin(e, false));
