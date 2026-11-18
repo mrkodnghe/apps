@@ -626,17 +626,61 @@ function knownFromText(t){
   if (!LIB) return null;
   // longest alias wins, so "ballet laps" beats "laps"
   let best = null;
-  for (const r of LIB.routes) for (const a of r.aliases) if (t.includes(a) && (!best || a.length > best.a.length)) best = {r, a};
+  for (const r of LIB.routes) for (const a of r.aliases) if (t.includes(a) && !new RegExp(`\\b(from|starting at|start at|leaving)\\s+(the\\s+)?${a}`).test(t) && (!best || a.length > best.a.length)) best = {r, a};
   if (!best) return null;
   const m = t.match(/\b(\d{1,2}|one|a|single|two|couple|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:of\s+)?(?:full\s+|ballet\s+|short\s+|small\s+|big\s+)?(?:laps?|loops?|times)\b/);
   const laps = m ? (NUMW[m[1]] || parseInt(m[1], 10)) : null;
   return {id: best.r.id, laps: laps && laps <= 20 ? laps : null};
 }
+// Turn a stitched list of coordinates plus its legs into an openrouteservice-like feature the rest of the app understands
+function stitchFeature(coords, legs, libM, surface){
+  let dist = 0, gain = 0, base = coords[0][2] || 0;
+  for (let i = 1; i < coords.length; i++) { dist += hav(coords[i-1], coords[i]); const e = coords[i][2] || 0; if (e > base + 1) { gain += e - base; base = e; } else if (e < base - 1) base = e; }
+  const sumOf = (key, f) => f && f.properties.extras && f.properties.extras[key] ? f.properties.extras[key].summary : [];
+  const surfVal = {asphalt: 3, paved: 1, gravel: 2}[surface] || 3;
+  const merge = key => [...legs.flatMap(f => sumOf(key, f)), {value: key === 'surface' ? surfVal : 3, distance: libM}].map(x => ({value: x.value, distance: x.distance, amount: +(x.distance/dist*100).toFixed(2)}));
+  return {type: 'Feature', geometry: {type: 'LineString', coordinates: coords},
+    properties: {summary: {distance: dist}, ascent: gain, extras: {surface: {summary: merge('surface')}, waytype: {summary: merge('waytype')}},
+      segments: [{steps: legs.flatMap(f => f ? f.properties.segments[0].steps : [])}]}};
+}
+// A library climb: ride to the bottom, up the exact line, then home another way (never back down it), bending out if the ride needs to be longer
+async function climbFeature(p, start, target, vias, r){
+  const L = r.line, foot = L[0].slice(0, 2), top = L[L.length-1].slice(0, 2), climbM = r.km*1000;
+  const boxes = []; let last = null;   // keep the way home off the climb itself
+  for (const pt of L.slice(Math.floor(L.length*.15), Math.ceil(L.length*.9))) if (!last || hav(last, pt) >= 150) { last = pt;
+    boxes.push([[[pt[0]-.0005, pt[1]-.0003], [pt[0]+.0005, pt[1]-.0003], [pt[0]+.0005, pt[1]+.0003], [pt[0]-.0005, pt[1]+.0003], [pt[0]-.0005, pt[1]-.0003]]]); }
+  const leg = async (coords, radiuses, avoid) => {
+    const body = {coordinates: coords, elevation:true, extra_info:['surface','waytype'], instructions:true, radiuses};
+    if (avoid && boxes.length) { try { return (await orsFetch(...orsReq.directions(PROFILES[p.type], {...body, options: {avoid_polygons: {type: 'MultiPolygon', coordinates: boxes}}}))).features[0]; }
+      catch (e) { if (e.kind === 'quota') throw e; } }
+    return (await orsFetch(...orsReq.directions(PROFILES[p.type], body))).features[0];
+  };
+  const home = shape => leg([top, ...vias.map(v => v.c), ...(shape ? [shape] : []), start.c], [300, ...vias.map(() => 1500), ...(shape ? [3000] : []), 5000], true);
+  const [there, back0] = await Promise.all([leg([start.c, foot], [5000, 300]), home(null)]);
+  let back = back0;
+  const len = b => there.properties.summary.distance + climbM + b.properties.summary.distance;
+  // too short for the ride they asked for: bend the way home out to the side away from the way there
+  if (!vias.length && len(back) < target*.8) {
+    const mid = [(top[0] + start.c[0])/2, (top[1] + start.c[1])/2], h = hav(top, start.c)/2000, brg = bearing(top, start.c);
+    const tm = there.geometry.coordinates[Math.floor(there.geometry.coordinates.length/2)];
+    const radius = extra => Math.sqrt(Math.max(0, ((2*h + extra/1250)/2)**2 - h*h));
+    let rad = radius(target - len(back));
+    const sideOf = (x, y) => hav(x, tm) >= hav(y, tm) ? 1 : -1, sd = sideOf(destPoint(mid, brg + 90, rad), destPoint(mid, brg - 90, rad));
+    back = await home(destPoint(mid, brg + sd*90, rad));
+    const err = (len(back) - target)/target;
+    if (Math.abs(err) > .15) { rad = Math.max(.5, rad*(1 - err*1.4)); back = await home(destPoint(mid, brg + sd*90, rad)); }
+  }
+  const coords = [...there.geometry.coordinates, ...L.slice(1).map(c => [...c]), ...back.geometry.coordinates.slice(1)];
+  const legM = there.properties.summary.distance + back.properties.summary.distance;
+  return {f: stitchFeature(coords, [there, back], climbM, r.surface), info: {id: r.id, name: r.name, short: r.short, kind: 'climb', laps: 1, lapKm: r.km, gain: r.gain, grade: r.grade,
+    quiet: !!r.quiet, cafe: r.cafe || null, legKm: Math.round(legM/100)/10, notes: r.notes || ''}};
+}
 // Ride a library route from the rider's start: there → the exact line (× laps) → back
-async function knownFeature(p, start, target){
+async function knownFeature(p, start, target, vias = []){
   await libP;
   const r = libRoute(p.known && p.known.id); if (!r) return null;
   const L = r.line;
+  if (r.kind === 'climb') return climbFeature(p, start, target, vias, r);
   let j = 0, dj = 1e12; L.forEach((pt, i) => { const d = hav(pt, start.c); if (d < dj) { dj = d; j = i; } });
   // join the loop at the point nearest the rider and ride it from there
   const lap = r.kind === 'lap' ? [...L.slice(j), ...L.slice(1, j + 1)] : L;
@@ -651,16 +695,7 @@ async function knownFeature(p, start, target){
   const coords = [...(there ? there.geometry.coordinates : [])];
   for (let k = 0; k < laps; k++) coords.push(...(k || there ? lap.slice(1) : lap));
   if (back) coords.push(...back.geometry.coordinates.slice(1));
-  let dist = 0, gain = 0, base = coords[0][2] || 0;
-  for (let i = 1; i < coords.length; i++) { dist += hav(coords[i-1], coords[i]); const e = coords[i][2] || 0; if (e > base + 1) { gain += e - base; base = e; } else if (e < base - 1) base = e; }
-  // surface and road type: the legs from openrouteservice, the library line from its own notes
-  const sumOf = (key, f) => f && f.properties.extras && f.properties.extras[key] ? f.properties.extras[key].summary : [];
-  const libM = laps*lapM, surfVal = {asphalt: 3, paved: 1, gravel: 2}[r.surface] || 3;
-  const merge = key => [...sumOf(key, there), ...sumOf(key, back), {value: key === 'surface' ? surfVal : 3, distance: libM}]
-    .map(x => ({value: x.value, distance: x.distance, amount: +(x.distance/dist*100).toFixed(2)}));
-  const f = {type: 'Feature', geometry: {type: 'LineString', coordinates: coords},
-    properties: {summary: {distance: dist}, ascent: gain, extras: {surface: {summary: merge('surface')}, waytype: {summary: merge('waytype')}},
-      segments: [{steps: [...(there ? there.properties.segments[0].steps : []), ...(back ? back.properties.segments[0].steps : [])]}]}};
+  const f = stitchFeature(coords, [there, back].filter(Boolean), laps*lapM, r.surface);
   return {f, info: {id: r.id, name: r.name, short: r.short, kind: r.kind, laps, lapKm: r.km, direction: r.direction, legKm: Math.round(legM/100)/10, notes: r.notes || ''}};
 }
 
@@ -1027,7 +1062,8 @@ async function signedFeature(p, start, c, profile = PROFILES[p.type]){
 
 async function realRoute(p, stage){
   const start = await resolveStart(p);
-  const viaNames = (p.via || []).filter(Boolean).slice(0, 3);
+  const knownName = p.known && LIB && libRoute(p.known.id) ? libRoute(p.known.id).name.toLowerCase() : '';
+  const viaNames = (p.via || []).filter(v => v && !(knownName && knownName.includes(String(v).toLowerCase()))).slice(0, 3);
   const viaRadius = Math.max(15, Math.min(p.dist, 150)*.6);
   const resolved = await Promise.all(viaNames.map(n => resolvePlace(n, start.c, viaRadius).catch(() => null)));
   const vias = resolved.filter(Boolean), unfound = viaNames.filter((n, i) => !resolved[i]);
@@ -1051,7 +1087,7 @@ async function realRoute(p, stage){
   // fetch nearby signed cycle routes in the background, in case the new loop doesn't fit (or the rider asked for one)
   const signedP = signedRoutesNear(start.c, targetKm > 60 ? 30 : 20);
   let feats, genErr = null, kn = null;
-  if (p.known) { stage(1, 'Using your route library'); kn = await knownFeature(p, start, target).catch(e => { if (e.kind === 'quota') throw e; return null; }); stage(1, meta1); }
+  if (p.known) { stage(1, 'Using your route library'); kn = await knownFeature(p, start, target, vias).catch(e => { if (e.kind === 'quota') throw e; return null; }); stage(1, meta1); }
   try {
     if (kn) feats = [kn.f];
     else if (vias.length) feats = await viaFeatures(p, start, vias, target);
@@ -1110,7 +1146,9 @@ async function realRoute(p, stage){
   // elevation profile: 64 samples by distance
   const lo = Math.min(...ele), hi = Math.max(...ele), range = Math.max(hi - lo, 120), prof = [];
   for (let k = 0, i = 0; k < 64; k++) { const d = total*k/63; while (i < cum.length - 1 && cum[i+1] < d) i++; prof.push(.12 + .88*(ele[i] - lo)/range); }
-  const cafe = p.cafe ? await findCafe(line, cum, total) : null;
+  const libCafe = kn && kn.info.cafe ? (() => { let bi2 = 0, bd = 1e12; line.forEach((pt, i) => { const d = hav(pt, kn.info.cafe.at); if (d < bd) { bd = d; bi2 = i; } });
+    return {name: kn.info.cafe.name, km: +(cum[bi2]/1000).toFixed(1), at: line[bi2]}; })() : null;
+  const cafe = p.cafe ? libCafe || await findCafe(line, cum, total) : null;
   stage(4, p.cafe ? cafe.name : '—');
   const sum = (f.properties.extras && f.properties.extras.surface ? f.properties.extras.surface.summary : []);
   const share = vals => sum.filter(x => vals.includes(x.value)).reduce((t, x) => t + x.distance, 0);
@@ -1237,7 +1275,9 @@ let editingReq = null;
 function renderUnderstood(p, targets){
   const asm = (p.assumptions || []).filter(a => !(p.basedOn && /^Popular way/.test(a)) && !(p.knownInfo && /\bkm\b|\blaps?\b/i.test(a)));   // the library note gives the real numbers   // the AI's usual way doesn't apply when a signed route is used
   const html = `<span class="mono">What I understood · tap to change</span><div class="uchips">${chipsFor(p).map(([k, label, off]) =>
-    `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.basedOn ? `<p class="assume signed-note"><span class="sdash"></span>Follows ${esc(p.basedOn.label)} for ${p.basedOn.km} km${p.basedOn.mixed && p.basedOn.unpaved > .1 ? ` · ${Math.round(p.basedOn.unpaved*100)}% unpaved paths` : ''} · signed cycle route from OpenStreetMap</p>` : ''}${p.knownInfo ? `<p class="assume signed-note"><span class="sdash lib"></span>${p.knownInfo.kind === 'lap' ? `${p.knownInfo.laps} × the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km each, ${p.knownInfo.direction})` : `Rides the ${esc(p.knownInfo.name)}`}${p.knownInfo.legKm ? ` · ${p.knownInfo.legKm} km there and back` : ''} · from your route library</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
+    `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.basedOn ? `<p class="assume signed-note"><span class="sdash"></span>Follows ${esc(p.basedOn.label)} for ${p.basedOn.km} km${p.basedOn.mixed && p.basedOn.unpaved > .1 ? ` · ${Math.round(p.basedOn.unpaved*100)}% unpaved paths` : ''} · signed cycle route from OpenStreetMap</p>` : ''}${p.knownInfo ? `<p class="assume signed-note"><span class="sdash lib"></span>${p.knownInfo.kind === 'lap' ? `${p.knownInfo.laps} × the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km each, ${p.knownInfo.direction})${p.knownInfo.legKm ? ` · ${p.knownInfo.legKm} km there and back` : ''}`
+  : p.knownInfo.kind === 'climb' ? `Up the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km at ${p.knownInfo.grade}%${p.knownInfo.quiet ? ', quiet road' : ''})${p.knownInfo.cafe ? ' · café near the top' : ''} · home a different way`
+  : `Rides the ${esc(p.knownInfo.name)}`} · from your route library</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
   targets.forEach(sel => { const el = $(sel); el.innerHTML = html; el._req = p; });
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (!b) return;
