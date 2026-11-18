@@ -494,14 +494,40 @@ function buildWorld(r, p, route, R, ctr, origin){
 /* ---------- MapLibre ---------- */
 const LIVE_STYLE = 'https://tiles.openfreemap.org/styles/positron';   // light basemap; the rest of the app stays dark   // used automatically when the page is hosted where it can reach it
 const W = (z0, w0, z1, w1) => ['interpolate',['exponential',1.6],['zoom'],z0,w0,z1,w1];
+// Natural colours for wayfinding on the light basemap: parks, woods, grass and water stand out so riders can read green space at a glance
+function naturalise(m){
+  const st = m.getStyle(); if (!st || !st.layers) return;
+  const has = id => !!m.getLayer(id), poly = ['match', ['geometry-type'], ['MultiPolygon', 'Polygon'], true, false];
+  const src = Object.keys(st.sources).find(k => st.sources[k].type === 'vector'); if (!src) return;
+  const paint = (id, k, v) => { if (has(id)) try { m.setPaintProperty(id, k, v); } catch (e) {} };
+  paint('park', 'fill-color', '#CFE4C3'); paint('park', 'fill-outline-color', '#B5D3A6');
+  paint('landcover_wood', 'fill-color', '#B9D6AA'); paint('landcover_wood', 'fill-opacity', ['interpolate', ['linear'], ['zoom'], 7, .5, 12, .9]);
+  paint('water', 'fill-color', '#AFCFE2'); paint('waterway', 'line-color', '#9DC4DB');
+  const below = ['water', 'landcover_wood', 'park'].find(has);   // keep new fills under water and buildings
+  const add = (id, layer, cls, color, opacity = 1) => { if (has(id)) return; try {
+    m.addLayer({id, type: 'fill', source: src, 'source-layer': layer, filter: ['all', poly, ['match', ['get', 'class'], cls, true, false]], paint: {'fill-color': color, 'fill-opacity': opacity}}, below);
+  } catch (e) {} };
+  add('nat-farmland', 'landcover', ['farmland'], '#EEF1E3', .8);
+  add('nat-grass', 'landcover', ['grass'], '#D4E8C9', .95);
+  add('nat-wetland', 'landcover', ['wetland'], '#CFE5DF', .9);
+  add('nat-sand', 'landcover', ['sand'], '#F2EAD3', .9);
+  add('nat-green-landuse', 'landuse', ['pitch', 'cemetery', 'playground', 'garden', 'stadium'], '#D8EACF', .9);
+  // park names in green, using the style's own font
+  const font = (st.layers.find(l => l.type === 'symbol' && l.layout && l.layout['text-font']) || {layout: {}}).layout['text-font'];
+  if (font && !has('nat-park-label')) try {
+    m.addLayer({id: 'nat-park-label', type: 'symbol', source: src, 'source-layer': 'park', minzoom: 11, filter: ['has', 'name'],
+      layout: {'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']], 'text-font': font, 'text-size': ['interpolate', ['linear'], ['zoom'], 11, 10, 15, 13], 'text-max-width': 8},
+      paint: {'text-color': '#3F7A3A', 'text-halo-color': 'rgba(255,255,255,.85)', 'text-halo-width': 1.4}});
+  } catch (e) {}
+}
 function offlineStyle(){
   return { version:8, sources:{ world:{ type:'geojson', data:{type:'FeatureCollection',features:[]} } },
     layers:[
       {id:'bg', type:'background', paint:{'background-color':'#F2F1EE'}},
       {id:'built', type:'fill', source:'world', filter:['==',['get','kind'],'built'], paint:{'fill-color':'#E7E5E0'}},
-      {id:'wood', type:'fill', source:'world', filter:['==',['get','kind'],'wood'], paint:{'fill-color':'#DCE5D3','fill-opacity':.9}},
-      {id:'water', type:'fill', source:'world', filter:['==',['get','kind'],'water'], paint:{'fill-color':'#CADBE4'}},
-      {id:'river', type:'line', source:'world', filter:['==',['get','kind'],'river'], paint:{'line-color':'#CADBE4','line-width':W(8,1.5,15,10)}, layout:{'line-cap':'round','line-join':'round'}},
+      {id:'wood', type:'fill', source:'world', filter:['==',['get','kind'],'wood'], paint:{'fill-color':'#C4DDB6','fill-opacity':.9}},
+      {id:'water', type:'fill', source:'world', filter:['==',['get','kind'],'water'], paint:{'fill-color':'#AFCFE2'}},
+      {id:'river', type:'line', source:'world', filter:['==',['get','kind'],'river'], paint:{'line-color':'#9DC4DB','line-width':W(8,1.5,15,10)}, layout:{'line-cap':'round','line-join':'round'}},
       {id:'road-minor', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'minor']], paint:{'line-color':'#FFFFFF','line-width':W(9,.6,15,6)}, layout:{'line-cap':'round','line-join':'round'}},
       {id:'road-sec', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'secondary']], paint:{'line-color':'#FFFFFF','line-width':W(8,.9,15,9)}, layout:{'line-cap':'round','line-join':'round'}},
       {id:'road-major', type:'line', source:'world', filter:['all',['==',['get','kind'],'road'],['==',['get','cls'],'major']], paint:{'line-color':'#FBFAF7','line-width':W(7,1.2,15,12)}, layout:{'line-cap':'round','line-join':'round'}},
@@ -521,6 +547,7 @@ function ensureMap(){
     map.touchZoomRotate.disableRotation();
     $('#attrib').textContent = live ? '© OpenFreeMap © OpenStreetMap · Routing openrouteservice' : 'MapLibre GL · dark · demo geography';
     map.on('load', () => {
+      if (live) naturalise(map);
       map.addSource('route', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
       map.addSource('climb', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
       map.addSource('signed', {type:'geojson', data:{type:'FeatureCollection',features:[]}});
