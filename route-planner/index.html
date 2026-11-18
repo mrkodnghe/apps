@@ -382,6 +382,7 @@ function parsePrompt(text) {
   const speed = {Road:26, Gravel:20, MTB:14}[p.type];
   p.dist = km ? +km[1] : mi ? Math.round(+mi[1]*1.609) : hrs ? Math.round(+hrs[1]*speed*.85) : 50;
   p.dist = Math.max(5, Math.min(250, Math.round(p.dist)));
+  p.distStated = !!(km || mi || hrs);
   p.elevGiven = !!(elev && !(km && elev[0].includes(km[0])));
   if (p.elevGiven) p.elev = elev[2] ? Math.round((+elev[1] + +elev[2]) / 2) : +elev[1];
   else p.elev = Math.round(p.dist * (/(hill|climb|mountain|lumpy)/.test(t) ? 14 : /(flat|easy|recovery)/.test(t) ? 3 : 6));
@@ -684,7 +685,7 @@ async function knownFeature(p, start, target, vias = []){
   if (r.kind === 'climb') return climbFeature(p, start, target, vias, r);
   let j = 0, dj = 1e12; L.forEach((pt, i) => { const d = hav(pt, start.c); if (d < dj) { dj = d; j = i; } });
   // join the loop at the point nearest the rider and ride it from there
-  const lap = r.kind === 'lap' ? [...L.slice(j), ...L.slice(1, j + 1)] : L;
+  const closed = hav(L[0], L[L.length-1]) < 200, lap = (r.kind === 'lap' || closed) ? [...L.slice(j), ...L.slice(1, j + 1)] : L;
   const lapM = r.km*1000;
   let there = null, back = null;
   if (dj > 250) {
@@ -697,7 +698,8 @@ async function knownFeature(p, start, target, vias = []){
   for (let k = 0; k < laps; k++) coords.push(...(k || there ? lap.slice(1) : lap));
   if (back) coords.push(...back.geometry.coordinates.slice(1));
   const f = stitchFeature(coords, [there, back].filter(Boolean), laps*lapM, r.surface);
-  return {f, info: {id: r.id, name: r.name, short: r.short, kind: r.kind, laps, lapKm: r.km, direction: r.direction, legKm: Math.round(legM/100)/10, notes: r.notes || ''}};
+  return {f, info: {id: r.id, name: r.name, short: r.short, kind: r.kind, laps, lapKm: r.km, direction: r.direction, legKm: Math.round(legM/100)/10, notes: r.notes || '',
+    quiet: !!r.quiet, cafe: r.cafe || null, warn: r.warn || ''}};
 }
 
 /* ---------- AI step: the relay asks Claude to turn the prompt into a structured brief ---------- */
@@ -749,6 +751,10 @@ function applyBrief(base, b){
   } else if (!(base.start && base.start.gps)) { delete q.start; q.startGPS = true; q.startPlace = null; }
   const startName = (st.type === 'place' && st.place || '').toLowerCase();
   q.via = (Array.isArray(b.via) ? b.via : (base.via || [])).map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== startName).slice(0, 3);   // older relays don't send via: keep the keyword guess
+  if (q.known && libRoute(q.known.id).kind === 'loop' && base.distStated && !(base.known && base.known.id === q.known.id)) {
+    const r = libRoute(q.known.id), said = (q.text || '').toLowerCase();
+    if (Math.abs(r.km - base.dist)/base.dist > .35 && !r.aliases.some(a => said.includes(a))) q.known = null;   // e.g. asked for 45 km: an 85 km ride doesn't fit
+  }
   if (!q.known && LIB) {   // a library climb named as a place to pass ("up Box Hill and Leith Hill"): ride the library climb, visit the rest on the way home
     const hit = LIB.routes.find(r => r.kind === 'climb' && q.via.some(v => { const x = v.toLowerCase(); return x === r.short.toLowerCase() || x === r.name.toLowerCase() || r.aliases.includes(x); }));
     if (hit) q.known = {id: hit.id, laps: null};
@@ -1282,7 +1288,7 @@ function renderUnderstood(p, targets){
   const html = `<span class="mono">What I understood · tap to change</span><div class="uchips">${chipsFor(p).map(([k, label, off]) =>
     `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.basedOn ? `<p class="assume signed-note"><span class="sdash"></span>Follows ${esc(p.basedOn.label)} for ${p.basedOn.km} km${p.basedOn.mixed && p.basedOn.unpaved > .1 ? ` · ${Math.round(p.basedOn.unpaved*100)}% unpaved paths` : ''} · signed cycle route from OpenStreetMap</p>` : ''}${p.knownInfo ? `<p class="assume signed-note"><span class="sdash lib"></span>${p.knownInfo.kind === 'lap' ? `${p.knownInfo.laps} × the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km each, ${p.knownInfo.direction})${p.knownInfo.legKm ? ` · ${p.knownInfo.legKm} km there and back` : ''}`
   : p.knownInfo.kind === 'climb' ? `Up the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km at ${p.knownInfo.grade}%${p.knownInfo.quiet ? ', quiet road' : ''})${p.knownInfo.cafe ? ' · café near the top' : ''} · home a different way`
-  : `Rides the ${esc(p.knownInfo.name)}`} · from your route library</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
+  : `Rides the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km${p.knownInfo.quiet ? ', avoids main roads' : ''})${p.knownInfo.legKm ? ` · ${p.knownInfo.legKm} km there and back` : ''}${p.knownInfo.warn ? ` · ${esc(p.knownInfo.warn)}` : ''}`} · from your route library</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
   targets.forEach(sel => { const el = $(sel); el.innerHTML = html; el._req = p; });
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (!b) return;
@@ -1303,7 +1309,7 @@ function openEditor(k){
     modal('Distance', `<div class="readout"><svg id="distNum"></svg><span class="mono">km</span></div>
       <input type="range" id="distRange" min="5" max="${ORS_MAX_KM}" step="1" value="${v}" aria-label="Distance in kilometres">
       <div class="presets">${[20, 40, 60, 80, 100].map(n => `<button data-km="${n}">${n} km</button>`).join('')}</div>`,
-      [['Cancel', false], ['Update route', true, () => applyEdit(p.known ? {dist: v, known: {...p.known, laps: null}} : {dist: v})]], 'Edit');
+      [['Cancel', false], ['Update route', true, () => applyEdit(p.known ? (libRoute(p.known.id).kind === 'lap' ? {dist: v, known: {...p.known, laps: null}} : {dist: v, known: null, knownInfo: null}) : {dist: v})]], 'Edit');
     const upd = n => { v = +n; $('#distRange').value = v; dotNum($('#distNum'), String(v), .1); };
     upd(v); $('#distRange').addEventListener('input', e => upd(e.target.value));
     $$('#modalBody [data-km]').forEach(b => b.addEventListener('click', () => upd(b.dataset.km)));

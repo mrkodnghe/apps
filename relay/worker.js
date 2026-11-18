@@ -85,7 +85,7 @@ Rules:
 - suggested_via: when the rider gives a direction or area ("into Surrey", "out to the hills"), or asks for a classic/popular/scenic ride, suggest the waypoints a local rider would use from the start location, so the outward leg is roughly 35–45% of the loop. Prefer cycle-friendly ways (parks open to bikes, quiet lanes, well-known climbs). If you don't know the area well, leave it empty.
 - If a refinement is given with a previous brief, return the full updated brief: change only what the refinement asks for, keep everything else (including via, unless asked to change it).
 - existing_route is only for riders who ask to follow an existing or signed route; don't set it just because a route would be nice.
-- Known routes: prefer one from the list whenever the request matches it; the planner then rides that exact line (adding the ride there and back). For laps, don't also put the park in via. Pick a known climb even when other places are named too ("up Box Hill and Leith Hill" → known_route Box Hill climb, via ["Leith Hill"]).
+- Known routes: prefer one from the list whenever the request matches it; the planner then rides that exact line (adding the ride there and back). For laps, don't also put the park in via. Only pick a whole-ride known route (not a lap or climb) when its distance is within about a third of what the rider asked for, or they name it. Pick a known climb even when other places are named too ("up Box Hill and Leith Hill" → known_route Box Hill climb, via ["Leith Hill"]).
 - Keep place names as the rider wrote them, cleaned up (capitalised, no "the" unless part of the name).`;
 
 async function understand(env, body) {
