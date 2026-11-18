@@ -717,7 +717,7 @@ function registerEditing(m){
     m.on(touch ? 'touchmove' : 'mousemove', move); m.on(touch ? 'touchend' : 'mouseup', up); m.on('touchcancel', cancel);
     if (touch) timer = setTimeout(startDrag, EDIT_HOLD_MS); else { e.preventDefault(); startDrag(); }
   };
-  m.on('click', () => closeTip());
+  m.on('click', e => { const t = e.originalEvent && e.originalEvent.target; if (t && t.closest && t.closest('.mk-edit, .edit-tip')) return; closeTip(); });   // a tap on a point opens its tooltip; anywhere else closes it
   m.on('mousedown', 'route-hit', e => begin(e, false));
   m.on('touchstart', 'route-hit', e => begin(e, true));
   m.on('mouseenter', 'route-hit', () => { if (edit && $('#route').classList.contains('active')) m.getCanvas().style.cursor = 'grab'; });
