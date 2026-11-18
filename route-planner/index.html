@@ -1194,7 +1194,7 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   }
   if (id !== runId) return;
   if (p.customTitle) R.title = p.customTitle; else if (p.aiTitle) R.title = p.aiTitle;
-  R.req = {...p, start: R.p && R.p.start, basedOn: R.basedOn || null, knownInfo: R.known || null, ...(R.known && R.p ? {dist: R.p.dist} : {})};   // with a library route the real distance is what the chip shows current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
+  R.req = {...p, start: R.p && R.p.start, basedOn: R.basedOn || null, knownInfo: R.known || null, ...(R.known && R.p ? {dist: R.p.dist} : {})};   /* with a library route the chip shows the real distance */ current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
   if (inPlace) { clearInterval(updTimer); bar($('#updBar'), 30); await new Promise(r => setTimeout(r, 380)); if (id !== runId) return; setUpdating(false); updateRouteInPlace(R); }
   if (R.missed && R.missed.length) setTimeout(() => toast(`Couldn’t route through ${R.missed.join(' and ')}`), R.capped ? 2400 : 0);
   if (R.capped) toast(`Free routing caps loops at ${ORS_MAX_KM}km`);
