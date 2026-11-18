@@ -729,7 +729,9 @@ function rebuildEdited(R, line, ele, surf, ctrl, what){
   R.climb = line.slice(bi, bj + 1); R.summitAt = line[bj]; R.summit = Math.round(ele[bj]); R.start = line[0];
   if (R.p.cafe && R.cafeAt) { let ci = 0, cd = 1e12; line.forEach((pt, i) => { const d = hav(pt, R.cafeAt); if (d < cd) { cd = d; ci = i; } }); R.cafeKm = +(cum[ci]/1000).toFixed(1); R.cafeFrac = cum[ci]/total; }
   (R.vias || []).forEach(v => { let m = 1e12; for (let i = 0; i < line.length; i += 3) m = Math.min(m, hav(line[i], v.c)); v.passed = m <= 1500; });
-  if (what) { R.edited = (R.edited || 0) + 1; R.req.edited = R.edited; renderUnderstood(R.req, ['#readyU', '#routeU']); }
+  R.req.dist = R.p.dist;   // the distance chip shows the edited route
+  if (what) { R.edited = (R.edited || 0) + 1; R.req.edited = R.edited; }
+  renderUnderstood(R.req, ['#readyU', '#routeU']);
   // redraw without the draw-on animation
   renderSheet(R); $('#genAgo').textContent = what ? 'Edited just now' : 'Undone';
   map.getSource('route').setData(lineFC(line)); map.getSource('climb').setData(lineFC(R.climb)); preview(null);
@@ -1772,7 +1774,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
 if (navigator.permissions) navigator.permissions.query({name:'geolocation'}).then(st => { if (st.state === 'granted') getLocation().catch(() => {}); }).catch(() => {});
 $('#mapUndo').addEventListener('click', undoMapEdit);
 // test handle for the prototype
-window.__rp = {get edit(){ return edit; }, applyMapEdit, undoMapEdit, signedRoutesNear, signedCandidates, signedFeature, condenseRoutes, retraceShare, generate, get current(){ return current; }};
+window.__rp = {get edit(){ return edit; }, get map(){ return map; }, applyMapEdit, undoMapEdit, signedRoutesNear, signedCandidates, signedFeature, condenseRoutes, retraceShare, generate, get current(){ return current; }};
 })();
 </script>
 </body>
