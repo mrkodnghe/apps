@@ -660,8 +660,9 @@ async function climbFeature(p, start, target, vias, r){
   let back = back0;
   const len = b => there.properties.summary.distance + climbM + b.properties.summary.distance;
   // too short for the ride they asked for: bend the way home out to the side away from the way there
-  if (!vias.length && len(back) < target*.8) {
-    const mid = [(top[0] + start.c[0])/2, (top[1] + start.c[1])/2], h = hav(top, start.c)/2000, brg = bearing(top, start.c);
+  if (len(back) < target*.8) {
+    const from = vias.length ? vias[vias.length-1].c : top;   // bend out after the last stop on the way home
+    const mid = [(from[0] + start.c[0])/2, (from[1] + start.c[1])/2], h = hav(from, start.c)/2000, brg = bearing(from, start.c);
     const tm = there.geometry.coordinates[Math.floor(there.geometry.coordinates.length/2)];
     const radius = extra => Math.sqrt(Math.max(0, ((2*h + extra/1250)/2)**2 - h*h));
     let rad = radius(target - len(back));
