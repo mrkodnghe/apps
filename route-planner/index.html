@@ -841,13 +841,9 @@ async function geocode(place, near, radius){
 }
 async function resolveStart(p){
   const t = p.text.toLowerCase(), keys = Object.keys(AREAS).sort((a,b)=>b.length-a.length);
-  if (p.towardsPlace) { const k = keys.find(k => k === p.towardsPlace.toLowerCase()); if (k) p.towards = AREAS[k].c; else { const g = await geocode(p.towardsPlace); if (g) p.towards = g.c; } }
+  p.towards = null;   // direction words ("into Surrey") no longer pull the route towards a point; the AI's popular-way suggestions guide it instead
   if (p.start) return p.start;                                  // refinements keep the same start
   if (p.ai && !p.startPlace) { try { const c = await getLocation(); return {c, name:'Your', gps:true}; } catch (e) { toast('Couldn’t get your location, so starting from Dorking'); return {c: AREAS.surrey.c, name: 'Dorking'}; } }
-  // a place the ride should head towards ("into Surrey") steers which loop is picked
-  const towardsKey = (p.noTowards || p.towardsPlace) ? null : keys.find(k => new RegExp(`\\b${TOWARDS_WORDS}\\s+(?:the\\s+)?${k}\\b`).test(t));
-  if (towardsKey) p.towards = AREAS[towardsKey].c;
-  else if (!p.noTowards && !p.towardsPlace) { const tp = placeFromText(p.text, TOWARDS_WORDS); if (tp) { const g = await geocode(tp); if (g) p.towards = g.c; } }
   // a start chosen from the chips
   if (p.startPlace) { const k = keys.find(k => k === p.startPlace.toLowerCase()); if (k) return {c: AREAS[k].c, name: AREAS[k].name};
     const g = await geocode(p.startPlace); if (g) return g; toast(`Couldn’t find ${p.startPlace}, so using your location`); }
@@ -1306,7 +1302,6 @@ function chipsFor(p){
       return r.kind === 'lap' ? `${n ? n + ' × ' : ''}${r.chip || r.name}${n > 1 ? 's' : ''}` : r.chip || r.name; })()]] : []),
     ...(p.via || []).map((v, i) => [`via:${i}`, `Via ${v}`]),
     ...((p.via || []).length < 3 ? [['addvia', '+ Add a stop', true]] : []),
-    ...(tw ? [['towards', `Towards ${tw}`]] : []),
     ...(p.existing ? [['signed', p.routeRef ? `Signed route · ${p.routeRef}` : 'Signed route']] : []),
     ['type', `${p.type} ride`],
     ['roads', p.quiet ? 'Quiet roads' : 'Any roads', !p.quiet],
