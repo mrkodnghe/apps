@@ -702,8 +702,9 @@ async function applyMapEdit(from, to, pts, what){
 }
 function undoMapEdit(){
   if (!edit || edit.busy || !edit.undo.length) return;
-  const u = edit.undo.pop(); rebuildEdited(edit.R, u.line, u.ele, u.surf, u.ctrl, null);
-  if (!edit.undo.length) { edit.R.edited = 0; edit.R.req.edited = 0; renderUnderstood(edit.R.req, ['#readyU', '#routeU']); }
+  const u = edit.undo.pop(), R = edit.R;
+  R.edited = edit.undo.length ? Math.max(1, (R.edited || 1) - 1) : 0; R.req.edited = R.edited;   // the note counts the edits still in place
+  rebuildEdited(R, u.line, u.ele, u.surf, u.ctrl, null);
 }
 // Recalculate everything the route screen shows from the edited line
 function rebuildEdited(R, line, ele, surf, ctrl, what){
