@@ -713,6 +713,7 @@ function applyBrief(base, b){
   } else if (!(base.start && base.start.gps)) { delete q.start; q.startGPS = true; q.startPlace = null; }
   const startName = (st.type === 'place' && st.place || '').toLowerCase();
   q.via = (Array.isArray(b.via) ? b.via : (base.via || [])).map(v => String(v).trim()).filter(v => v && v.toLowerCase() !== startName).slice(0, 3);   // older relays don't send via: keep the keyword guess
+  if (q.known) { const nm = libRoute(q.known.id).name.toLowerCase(); q.via = q.via.filter(v => !nm.includes(v.toLowerCase())); }   // the park is already the route
   const tw = b.towards ? String(b.towards).replace(/^(?:in)?to(?:wards)?\s+|^(?:out\s+)?(?:to|towards|into)\s+/i, '').replace(/^the\s+/i, '').trim() : '';
   if (tw && !q.via.some(v => v.toLowerCase() === tw.toLowerCase())) { q.towardsPlace = tw; q.noTowards = false; } else { q.towardsPlace = null; q.noTowards = true; }
   const taken = new Set([startName, ...q.via.map(v => v.toLowerCase())]);
@@ -1193,7 +1194,7 @@ async function generate(text, {quick=false, label='Generating your route', inPla
   }
   if (id !== runId) return;
   if (p.customTitle) R.title = p.customTitle; else if (p.aiTitle) R.title = p.aiTitle;
-  R.req = {...p, start: R.p && R.p.start, basedOn: R.basedOn || null, knownInfo: R.known || null}; current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
+  R.req = {...p, start: R.p && R.p.start, basedOn: R.basedOn || null, knownInfo: R.known || null, ...(R.known && R.p ? {dist: R.p.dist} : {})};   // with a library route the real distance is what the chip shows current = R; doneSteps = 5; finished = true; renderUnderstood(R.req, ['#readyU', '#routeU']);
   if (inPlace) { clearInterval(updTimer); bar($('#updBar'), 30); await new Promise(r => setTimeout(r, 380)); if (id !== runId) return; setUpdating(false); updateRouteInPlace(R); }
   if (R.missed && R.missed.length) setTimeout(() => toast(`Couldn’t route through ${R.missed.join(' and ')}`), R.capped ? 2400 : 0);
   if (R.capped) toast(`Free routing caps loops at ${ORS_MAX_KM}km`);
@@ -1234,7 +1235,7 @@ function chipsFor(p){
 }
 let editingReq = null;
 function renderUnderstood(p, targets){
-  const asm = (p.assumptions || []).filter(a => !(p.basedOn && /^Popular way/.test(a)));   // the AI's usual way doesn't apply when a signed route is used
+  const asm = (p.assumptions || []).filter(a => !(p.basedOn && /^Popular way/.test(a)) && !(p.knownInfo && /\bkm\b|\blaps?\b/i.test(a)));   // the library note gives the real numbers   // the AI's usual way doesn't apply when a signed route is used
   const html = `<span class="mono">What I understood · tap to change</span><div class="uchips">${chipsFor(p).map(([k, label, off]) =>
     `<button class="uchip${off ? ' off' : ''}" data-edit="${k}">${label}${PEN}</button>`).join('')}</div>${p.basedOn ? `<p class="assume signed-note"><span class="sdash"></span>Follows ${esc(p.basedOn.label)} for ${p.basedOn.km} km${p.basedOn.mixed && p.basedOn.unpaved > .1 ? ` · ${Math.round(p.basedOn.unpaved*100)}% unpaved paths` : ''} · signed cycle route from OpenStreetMap</p>` : ''}${p.knownInfo ? `<p class="assume signed-note"><span class="sdash lib"></span>${p.knownInfo.kind === 'lap' ? `${p.knownInfo.laps} × the ${esc(p.knownInfo.name)} (${p.knownInfo.lapKm} km each, ${p.knownInfo.direction})` : `Rides the ${esc(p.knownInfo.name)}`}${p.knownInfo.legKm ? ` · ${p.knownInfo.legKm} km there and back` : ''} · from your route library</p>` : ''}${asm.length ? `<p class="assume">Assumed: ${asm.map(a => esc(a)).join(' · ')}</p>` : ''}`;
   targets.forEach(sel => { const el = $(sel); el.innerHTML = html; el._req = p; });
