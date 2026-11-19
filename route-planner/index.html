@@ -39,6 +39,7 @@ button{background:none;border:0;cursor:pointer}
 .pill{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:13px 20px;border-radius:999px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);font-size:16px;font-weight:500;white-space:nowrap;transition:background .2s,transform .15s}
 .pill:active{transform:scale(.97);background:rgba(255,255,255,.14)}
 .topbar{display:flex;align-items:center;justify-content:space-between;min-height:48px;flex:none}
+.brand-dots{height:13px;width:auto;display:block}
 .input{display:flex;align-items:center;gap:8px;height:64px;border-radius:32px;padding:0 6px 0 24px;background:rgba(255,255,255,.08);border:1px solid var(--line);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);flex:none}
 .input input{flex:1;min-width:0;background:none;border:0;outline:0;font-size:16px}
 .input input::placeholder{color:var(--faint)}
@@ -260,7 +261,7 @@ button{background:none;border:0;cursor:pointer}
     <div class="home-scroll">
     <div class="topbar">
       <button class="icon-btn" id="aboutBtn" aria-label="About this prototype"><svg viewBox="0 0 24 24" fill="none"><path d="M4 9h16M4 15h10" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round"/></svg></button>
-      <span class="mono" id="today">Today</span>
+      <svg class="brand-dots" id="brandMark" role="img" aria-label="Loop System"></svg>
       <button class="icon-btn" id="profileBtn" aria-label="Profile"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#F2F2F2" stroke-width="2"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" stroke="#F2F2F2" stroke-width="2" stroke-linecap="round"/></svg></button>
     </div>
     <h1 class="headline">Where are we going today?</h1>
@@ -350,7 +351,12 @@ const GLYPHS = {
   '4':['00010','00110','01010','10010','11111','00010','00010'],'5':['11111','10000','11110','00001','00001','10001','01110'],
   '6':['00110','01000','10000','11110','10001','10001','01110'],'7':['11111','00001','00010','00100','01000','01000','01000'],
   '8':['01110','10001','10001','01110','10001','10001','01110'],'9':['01110','10001','10001','01111','00001','00010','01100'],
-  '%':['11001','11010','00010','00100','01000','01011','10011'],':':['00000','01100','01100','00000','01100','01100','00000']
+  '%':['11001','11010','00010','00100','01000','01011','10011'],':':['00000','01100','01100','00000','01100','01100','00000'],
+  // letters for the LOOP SYSTEM wordmark
+  'L':['10000','10000','10000','10000','10000','10000','11111'],'O':['01110','10001','10001','10001','10001','10001','01110'],
+  'P':['11110','10001','10001','11110','10000','10000','10000'],'S':['01111','10000','10000','01110','00001','00001','11110'],
+  'Y':['10001','10001','01010','00100','00100','00100','00100'],'T':['11111','00100','00100','00100','00100','00100','00100'],
+  'E':['11111','10000','10000','11110','10000','10000','11111'],'M':['10001','11011','10101','10101','10001','10001','10001']
 };
 function dotNum(svg, str, ghost = .12) {
   const S = 11, D = 8, cw = 6*S; let out = '';
@@ -1714,7 +1720,7 @@ $('#cards').innerHTML = EXAMPLES.map((e,i) => `<article class="card" style="back
 $('#pager').innerHTML = EXAMPLES.map((_,i) => `<i class="${i?'':'on'}"></i>`).join('');
 $('#cards').addEventListener('scroll', () => { const c = $('#cards'), i = Math.round(c.scrollLeft / (c.firstElementChild.offsetWidth + 12)); $$('#pager i').forEach((d,j) => d.classList.toggle('on', i === j)); }, {passive:true});
 $('#cards').addEventListener('click', e => { const b = e.target.closest('[data-ex]'); if (b) generate(EXAMPLES[+b.dataset.ex].prompt); });
-$('#today').textContent = new Date().toLocaleDateString('en-GB',{weekday:'short',day:'numeric'}) + ' · Today';
+dotNum($('#brandMark'), 'LOOP SYSTEM', .1);   // dot-matrix wordmark in the home header
 
 const MIC = '<svg viewBox="0 0 24 24" fill="none"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 19v3" stroke="#000" stroke-width="2" stroke-linecap="round"/></svg><span class="rec"></span>';
 const SEND = '<svg viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
