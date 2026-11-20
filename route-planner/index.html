@@ -844,7 +844,7 @@ const ORS_MAX_KM = 100;                      // openrouteservice's own limit for
 const MAX_KM = 200;                          // longest ride the app plans (longer loops are built from waypoints)
 /* ---------- Route library: hand-picked routes and laps (from GPX files) the AI can choose from ---------- */
 let LIB = null;
-const libP = fetch('routes-library.json').then(r => r.ok ? r.json() : null).then(j => (LIB = j && Array.isArray(j.routes) ? j : null)).catch(() => null);
+const libP = fetch('routes-library.json', {cache: 'no-cache'}).then(r => r.ok ? r.json() : null).then(j => (LIB = j && Array.isArray(j.routes) ? j : null)).catch(() => null);
 const libRoute = id => LIB && LIB.routes.find(r => r.id === id);
 const NUMW = {one:1, a:1, single:1, two:2, couple:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10};
 function knownFromText(t){
