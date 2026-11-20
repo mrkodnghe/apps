@@ -986,7 +986,9 @@ function applyBrief(base, b){
     if (!(num ? new RegExp(`\\b${num[0]}\\b`).test(said) : word && said.includes(word))) q.routeRef = null;
   }
   if ('known_route' in b) {   // older relays: keep the keyword guess
-    const k = b.known_route; q.known = k && libRoute(k.id) ? {id: k.id, laps: Number.isInteger(k.laps) && k.laps > 0 && k.laps <= 20 ? k.laps : null} : null;
+    const k = b.known_route, guess = q.known; q.known = k && libRoute(k.id) ? {id: k.id, laps: Number.isInteger(k.laps) && k.laps > 0 && k.laps <= 20 ? k.laps : null} : null;
+    // the rider named a library route outright ("bun run", "walton loop"): keep it even if the AI passed on it
+    if (!q.known && guess) { const r = libRoute(guess.id), said = (q.text || '').toLowerCase(); if (r && [r.short, r.name].some(n => n && said.includes(n.toLowerCase()))) q.known = guess; }
   }
   if (q.known && !q.known.laps && base.known && base.known.id === q.known.id && !(Number(b.distance_km) > 0 && Number(b.distance_km) !== base.dist)) q.known.laps = base.known.laps;
   const st = b.start || {type:'gps'};
