@@ -171,6 +171,31 @@ export default {
         return pass(res, cors);
       }
 
+      // Road distances: POST /matrix/{profile}  {locations:[[lon,lat],...], sources:[0], destinations:[1..]}
+      // Used to find where a known route is quickest to join by bike. Separate ORS quota from directions.
+      if (request.method === 'POST' && url.pathname.startsWith('/matrix/')) {
+        const profile = url.pathname.split('/')[2];
+        if (!PROFILES.has(profile)) return json({ error: 'Unknown profile' }, 400, cors);
+        const body = await request.json();
+        const locs = body.locations;
+        if (!Array.isArray(locs) || locs.length < 2 || locs.length > 13 || !locs.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite))) return json({ error: 'Bad locations' }, 400, cors);
+        const raw = JSON.stringify({ locations: locs, sources: [0], destinations: locs.map((_, i) => i).slice(1), metrics: ['distance', 'duration'] });
+        const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(profile + raw)))].map(b => b.toString(16).padStart(2, '0')).join('');
+        const cacheKey = new Request(`https://relay-cache.local/matrix/${hash}`);
+        const hit = await caches.default.match(cacheKey);
+        if (hit) return pass(hit, { ...cors, 'X-Relay-Cache': 'hit' });
+        const res = await fetch(`${ORS}/v2/matrix/${profile}`, {
+          method: 'POST',
+          headers: { 'Authorization': env.ORS_KEY, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: raw,
+        });
+        if (res.ok) {
+          const keep = new Response(res.clone().body, { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=86400' } });
+          ctx.waitUntil(caches.default.put(cacheKey, keep));
+        }
+        return pass(res, cors);
+      }
+
       // Place search: GET /geocode?text=Richmond Park&near=lon,lat&radius=km  (cached for a day to save quota)
       // near/radius keep the search close to the start, so "Richmond Park" means the one in London, not Yorkshire.
       if (request.method === 'GET' && url.pathname === '/geocode') {

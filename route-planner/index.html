@@ -901,6 +901,23 @@ async function climbFeature(p, start, target, vias, r){
   return {f: stitchFeature(coords, [there, back], climbM, r.surface), info: {id: r.id, name: r.name, short: r.short, kind: 'climb', laps: 1, lapKm: r.km, gain: r.gain, grade: r.grade,
     quiet: !!r.quiet, cafe: r.cafe || null, legKm: Math.round(legM/100)/10, notes: r.notes || ''}};
 }
+// Pick where to join a loop: points every ~300 m round it, the 12 closest scored by real riding distance (one matrix request)
+async function bestJoin(L, from, type){
+  const samples = []; let acc = 0, lastAt = -1e9;
+  for (let i = 0; i < L.length; i++) { if (i) acc += hav(L[i-1], L[i]); if (acc - lastAt >= 300) { samples.push({i, straight: hav(L[i], from)}); lastAt = acc; } }
+  const cand = samples.sort((a, b) => a.straight - b.straight).slice(0, 12);
+  if (cand.length < 2 || !RELAY) return null;
+  try {
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 6000);
+    const res = await fetch(`${RELAY}/matrix/${PROFILES[type] || PROFILES.Road}`, {method:'POST', headers:{'Content-Type':'application/json'}, signal: ctl.signal,
+      body: JSON.stringify({locations: [from, ...cand.map(c => L[c.i].slice(0, 2))]})}).finally(() => clearTimeout(to));
+    if (!res.ok) return null;                       // older relay without /matrix: fall back to the nearest point
+    const d = (await res.json()).distances; if (!d || !d[0]) return null;
+    let best = null;
+    cand.forEach((c, k) => { const m = d[0][k]; if (m != null && (!best || m < best.road)) best = {...c, road: m}; });
+    return best;
+  } catch (e) { return null; }
+}
 // Ride a library route from the rider's start: there → the exact line (× laps) → back
 async function knownFeature(p, start, target, vias = []){
   await libP;
@@ -908,8 +925,10 @@ async function knownFeature(p, start, target, vias = []){
   const L = r.line;
   if (r.kind === 'climb') return climbFeature(p, start, target, vias, r);
   let j = 0, dj = 1e12; L.forEach((pt, i) => { const d = hav(pt, start.c); if (d < dj) { dj = d; j = i; } });
-  // join the loop at the point nearest the rider and ride it from there
-  const closed = hav(L[0], L[L.length-1]) < 200, lap = (r.kind === 'lap' || closed) ? [...L.slice(j), ...L.slice(1, j + 1)] : L;
+  const closed = hav(L[0], L[L.length-1]) < 200;
+  // join the loop where it's quickest to reach by bike, not just nearest as the crow flies (park walls, gates, rivers)
+  if ((r.kind === 'lap' || closed) && dj > 250) { const b = await bestJoin(L, start.c, p.type); if (b) { j = b.i; dj = b.straight; } }
+  const lap = (r.kind === 'lap' || closed) ? [...L.slice(j), ...L.slice(1, j + 1)] : L;
   const lapM = r.km*1000;
   let there = null, back = null;
   if (dj > 250) {

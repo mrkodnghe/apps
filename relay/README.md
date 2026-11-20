@@ -23,5 +23,6 @@ It only accepts requests from the sites listed in `ALLOWED_ORIGINS`, only allows
 | GET | `/geocode?text=…` | Find a place in Great Britain |
 | POST | `/pois` | Cafés within 2 km of a point |
 | GET | `/cycleroutes?near=lon,lat&radius=km` | Signed cycle routes (National Cycle Network, EuroVelo, named regional routes) from OpenStreetMap via Overpass, cached a week per area. Used as a backup when a new loop doesn't fit, or when the rider asks for a signed route |
+| POST | `/matrix/{profile}` | Riding distance from the rider to up to 12 points (`{locations:[[lon,lat],...]}`, first is the start). Used to pick the quickest place to join a known loop. Cached a day; uses the ORS matrix quota, not directions |
 | POST | `/understand` | AI step: free-text request (or refinement) → structured ride brief |
 | GET | `/health` | Check the relay is set up |
